@@ -5,8 +5,8 @@
 #include <PubSubClient.h>
 #include <map>
 #include <LittleFS.h>
+#include <Servo.h>
 
-#define LED_PIN 2//用于控制模块led灯
 #define MSG_BUFFER_SIZE	(4096)//mqtt服务器的配置
 
 //-=-=-=-=-=-=-=-=↓用户配置↓-=-=-=-=-=-=-=-=-=-=
@@ -30,6 +30,9 @@ String bambu_load = "{\"print\":{\"command\":\"ams_change_filament\",\"curr_temp
 String bambu_done = "{\"print\":{\"command\":\"ams_control\",\"param\":\"done\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}"; // 完成
 String bambu_clear = "{\"print\":{\"command\": \"clean_print_error\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}";
 String bambu_status = "{\"pushing\": {\"sequence_id\": \"0\", \"command\": \"pushall\"}}";
+int servoPin = 2;//舵机引脚
+int motorPin1 = 3;//电机一号引脚
+int motorPin2 = 4;//电机二号引脚
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
@@ -42,6 +45,10 @@ unsigned long lastMsg = 0;
 char msg[MSG_BUFFER_SIZE];
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
+
+unsigned long lastTime = millis();//mqtt定时任务
+
+Servo servo;//初始化舵机
 
 //连接wifi
 void connectWF(String wn,String wk) {
@@ -76,7 +83,6 @@ void writePData(JsonDocument Pdata){
     }
 }
 
-
 //获取配置数据
 JsonDocument getCData(){
     File file = LittleFS.open("/config.json", "r");
@@ -90,6 +96,52 @@ void writeCData(JsonDocument Cdata){
     serializeJson(Cdata, file);
     file.close();
 }
+
+//定义电机驱动类和舵机控制类
+class Machinery {
+  private:
+    int pin1;
+    int pin2;
+  public:
+    Machinery(int pin1, int pin2) {
+      this->pin1 = pin1;
+      this->pin2 = pin2;
+      pinMode(pin1, OUTPUT);
+      pinMode(pin2, OUTPUT);
+    }
+
+    void forward() {
+      digitalWrite(pin1, HIGH);
+      digitalWrite(pin2, LOW);
+    }
+
+    void backforward() {
+      digitalWrite(pin1, LOW);
+      digitalWrite(pin2, HIGH);
+    }
+
+    void stop() {
+      digitalWrite(pin1, LOW);
+      digitalWrite(pin2, LOW);
+    }
+};
+class ServoControl {
+  public:
+    ServoControl(){
+    }
+    void push() {
+        servo.write(180);
+    }
+    void pull() {
+        servo.write(0);
+    }
+    void writeAngle(int angle) {
+        servo.write(angle);
+    }
+};
+//定义电机舵机变量
+ServoControl sv;
+Machinery mc(motorPin1, motorPin2);
 
 //连接mqtt
 void connectMQTT() {
@@ -174,20 +226,20 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }else if (Pdata["subStep"] == "2"){
             if (printError == "318750723") {
                 Serial.println("拔出耗材");
-                //sv.push();
-                //mc.backforward();
+                sv.push();
+                mc.backforward();
                 Pdata["subStep"] = "3";
             } else if (printError == "318734339") {
                 Serial.println("拔出耗材");
-                //sv.push();
-                //mc.backforward();
+                sv.push();
+                mc.backforward();
                 client.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
                 Pdata["subStep"] = "3";
             }
         }else if (Pdata["subStep"] == "3" && amsStatus == "0"){
             Serial.println("退料完成，本次换色完成");
-            //sv.pull();
-            //mc.stop();
+            sv.pull();
+            mc.stop();
             Pdata["step"] = "4";
             Pdata["subStep"] = "1";
         }
@@ -207,24 +259,24 @@ void callback(char* topic, byte* payload, unsigned int length) {
             }
         }else if (Pdata["subStep"] == "2" && printError == "318750726"){
             Serial.println("送入耗材");
-            //sv.push();
-            //mc.forward();
+            sv.push();
+            mc.forward();
             Pdata["subStep"] = "3";
         }else if (Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1"){
             Serial.println("停止送料");
-            //mc.stop();
+            mc.stop();
             client.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
             Pdata["subStep"] = "4";
         }else if (Pdata["subStep"] == "4"){
             if (hwSwitchState == "0") {
                 Serial.println("检测到送料失败，重新送料!");
-                //mc.backforward();
+                mc.backforward();
                 delay(2000);
-                //mc.stop();
+                mc.stop();
                 Pdata["subStep"] = "1";
             } else if (hwSwitchState == "1") {
                 Serial.println("送料成功，等待挤出换料");
-                //sv.pull();
+                sv.pull();
                 Pdata["subStep"] = "5"; // 更新 subStep
             }
         }else if (Pdata["subStep"] == "5"){
@@ -246,12 +298,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }else if (Pdata["subStep"] == "AGAIN"){
             if (hwSwitchState == "0"){
                 Serial.println("尝试重新送料");
-                //sv.push();
-                //mc.forward();
+                sv.push();
+                mc.forward();
             }else if (hwSwitchState == "1"){
                 Serial.println("送料成功!");
-                //mc.stop();
-                //sv.pull();
+                mc.stop();
+                sv.pull();
                 Pdata["subStep"] = "5";
             }
         }
@@ -288,6 +340,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 //定时任务
 void timerCallback() {
+    if (debug){Serial.println("定时任务执行！");}
     client.publish(bambu_topic_publish.c_str(), bambu_status.c_str());
 }
 
@@ -359,14 +412,14 @@ void setup() {
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
     bambu_topic_publish = "device/" + String(bambu_device_serial) + "/request";
-    pinMode(LED_PIN, OUTPUT);
 
     connectWF(wifiName,wifiKey);
+
+    servo.attach(servoPin,500,2500);
 
     espClient.setInsecure();
     client.setServer(bambu_mqtt_broker.c_str(), 8883);
     client.setCallback(callback);
-    
     
     if (!LittleFS.exists("/data.json")) {
         JsonDocument Pdata;
@@ -385,10 +438,10 @@ void setup() {
         Serial.println("成功读取配置文件!");
     }
 
-    //布置定时任务，向拓竹索要当前情况
-    timer1_attachInterrupt(timerCallback);  // 绑定定时器中断服务程序
-    timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP); // 设置定时器分频和模式
-    timer1_write(1500000);  // 设置定时器触发周期，单位为微秒，这里设置为 1.5 秒
+    //[因为与pwm冲突已弃用]布置定时任务，向拓竹索要当前情况
+    //timer1_attachInterrupt(timerCallback);  // 绑定定时器中断服务程序
+    //timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP); // 设置定时器分频和模式
+    //timer1_write(1000000);  // 设置定时器触发周期，单位为微秒，这里设置为 1 秒
 }
 
 void loop() {
@@ -396,6 +449,10 @@ void loop() {
         connectMQTT();
     }
     client.loop();
+    if (millis()-lastTime > 2000){
+        lastTime = millis();
+        timerCallback();
+    }
     if (Serial.available()>0){
         String content = Serial.readString();
         if (content=="delet config"){
@@ -415,8 +472,36 @@ void loop() {
         {
             debug = not debug;
             Serial.println("debug change");
-        }
-        
-        
+        }else if (content == "push")
+        {
+            sv.push();
+            Serial.println("push COMPLETE");
+        }else if (content == "pull")
+        {
+            sv.pull();
+            Serial.println("pull COMPLETE");
+        }else if (content.indexOf("sv") != -1)
+        {   
+            String numberString = "";
+            for (unsigned int i = 0; i < content.length(); i++) {
+            if (isdigit(content[i])) {
+                numberString += content[i];
+            }
+            }
+            int number = numberString.toInt(); 
+            sv.writeAngle(number);
+            Serial.println("["+numberString+"]COMPLETE");
+        }else if (content == "forward" or content == "fw")
+        {
+            mc.forward();
+            Serial.println("forwarding!");
+        }else if (content == "backforward" or content == "bfw")
+        {
+            mc.backforward();
+            Serial.println("backforwarding!");
+        }else if (content == "stop"){
+            mc.stop();
+            Serial.println("Stop!");
+        }        
     }
 }
