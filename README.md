@@ -1,4 +1,4 @@
-<p align="center"><img src="https://github.com/applenana/AP-AMS/blob/main/icon/icon.png" width="200" height="200" alt="nonebot"></a>
+<p align="center"><img src="https://github.com/applenana/AP-AMS/blob/main/icon/icon.png" width="200" height="200" alt="ap-ams"></a>
 </p>
 
 <div align="center">
