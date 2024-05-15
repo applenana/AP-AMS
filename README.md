@@ -19,9 +19,18 @@ _✨ 一个简单的适用于拓竹的自动换色系统 ✨_
 - 使用舵机控制齿轮松紧，仅换料时压紧齿轮，正常打印依靠拓竹的近端挤出机
 - 正常打印低噪音
 
+## 使用
+- 你需要准备:
+  - 一颗能沉下心来折腾的心
+  - makerworld中提到的部分[材料](https://makerworld.com/zh/models/463829#profileId-372457)
+  - 嘉立创中的bom表(待完成)
+  - 502胶水，螺丝刀……
+- (待续)
+
 ## 提示
 - micropython版本已经弃用,原因是内存无法支撑其在esp8266中运行,你可以尝试在esp32中运行它(不建议)
 - 项目仍未完成……请实时关注项目的更新,很有可能解决重大问题
+- 模型和gcode已上传至[makerworld](https://makerworld.com/zh/@applenana)
 
 ## 鸣谢
 - 整个项目的整体思路和部分资料来源于[YBA0312的YBA-AMS项目](https://github.com/YBA0312/YBA-AMS-ESP)!
