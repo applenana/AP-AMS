@@ -6,6 +6,7 @@
 #include <map>
 #include <LittleFS.h>
 #include <Servo.h>
+#include <Adafruit_NeoPixel.h>
 
 #define MSG_BUFFER_SIZE	(4096)//mqtt服务器的配置
 
@@ -30,9 +31,13 @@ String bambu_load = "{\"print\":{\"command\":\"ams_change_filament\",\"curr_temp
 String bambu_done = "{\"print\":{\"command\":\"ams_control\",\"param\":\"done\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}"; // 完成
 String bambu_clear = "{\"print\":{\"command\": \"clean_print_error\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}";
 String bambu_status = "{\"pushing\": {\"sequence_id\": \"0\", \"command\": \"pushall\"}}";
-int servoPin = 2;//舵机引脚
-int motorPin1 = 3;//电机一号引脚
-int motorPin2 = 4;//电机二号引脚
+int servoPin = 13;//舵机引脚
+int motorPin1 = 4;//电机一号引脚
+int motorPin2 = 5;//电机二号引脚
+unsigned int renewTime = 1250;//定时任务刷新时间
+unsigned int ledBrightness;//led默认亮度
+#define ledPin 12//led引脚
+#define ledPixels 3//led数量
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
@@ -45,23 +50,44 @@ unsigned long lastMsg = 0;
 char msg[MSG_BUFFER_SIZE];
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
+Adafruit_NeoPixel leds(ledPixels, ledPin, NEO_GRB + NEO_KHZ800);
 
-unsigned long lastTime = millis();//mqtt定时任务
+unsigned long lastTime = millis();
+unsigned long checkTime = millis();//mqtt定时任务
+int inLed = 2;//跑马灯led变量
+int waitLed = 2;
+int completeLed = 2;
 
 Servo servo;//初始化舵机
 
+void ledAll(unsigned int r, unsigned int g, unsigned int b) {//led填充
+    leds.fill(leds.Color(r,g,b));
+    leds.show();
+}
+
 //连接wifi
 void connectWF(String wn,String wk) {
+    ledAll(0,0,0);
+    int led = 2;
     WiFi.begin(wn, wk);
     Serial.print("连接到wifi [" + String(wifiName) + "]");
     while (WiFi.status() != WL_CONNECTED) {
+        if (led == -1){
+            led = 2;
+            ledAll(0,0,0);
+        }else{
+            leds.setPixelColor(led,leds.Color(0,255,0));
+            leds.show();
+            led--;
+        }
         Serial.print(".");
-        delay(500);
+        delay(250);
     }
     Serial.println("");
     Serial.println("WIFI已连接");
     Serial.println("IP: ");
     Serial.println(WiFi.localIP());
+    ledAll(50,255,50);
 }
 
 //获取持久数据
@@ -80,6 +106,7 @@ void writePData(JsonDocument Pdata){
         file.close();
     } else {
         Serial.println("错误：数据缺少必要的参数，无法存储。");
+        ledAll(255,0,0);
     }
 }
 
@@ -121,8 +148,8 @@ class Machinery {
     }
 
     void stop() {
-      digitalWrite(pin1, LOW);
-      digitalWrite(pin2, LOW);
+      digitalWrite(pin1, HIGH);
+      digitalWrite(pin2, HIGH);
     }
 };
 class ServoControl {
@@ -130,10 +157,10 @@ class ServoControl {
     ServoControl(){
     }
     void push() {
-        servo.write(180);
+        servo.write(0);
     }
     void pull() {
-        servo.write(0);
+        servo.write(180);
     }
     void writeAngle(int angle) {
         servo.write(angle);
@@ -151,11 +178,13 @@ void connectMQTT() {
             Serial.println("连接成功!");
             Serial.println(bambu_topic_subscribe);
             client.subscribe(bambu_topic_subscribe.c_str());
+            ledAll(0,0,255);
         } else {
             Serial.print("连接失败，失败原因:");
             Serial.print(client.state());
             Serial.println("在一秒后重新连接");
             delay(1000);
+            ledAll(255,0,0);
         }
     }
 }
@@ -174,31 +203,45 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // 手动释放内存
     delete data;
     
-    if (!(amsStatus == printError && printError == hwSwitchState && hwSwitchState == gcodeState && gcodeState == mcPercent && mcPercent == mcRemainingTime && mcRemainingTime == "null") and debug) {
-        Serial.println(sequenceId+"|ams["+amsStatus+"]"+"|err["+printError+"]"+"|hw["+hwSwitchState+"]"+"|gcode["+gcodeState+"]"+"|mcper["+mcPercent+"]"+"|mcrtime["+mcRemainingTime+"]");
-        Serial.print("Free memory: ");
-        Serial.print(ESP.getFreeHeap());
-        Serial.println(" bytes");
-        Serial.println("-=-=-=-=-");
+    if (!(amsStatus == printError && printError == hwSwitchState && hwSwitchState == gcodeState && gcodeState == mcPercent && mcPercent == mcRemainingTime && mcRemainingTime == "null")) {
+        if (debug){
+            Serial.println(sequenceId+"|ams["+amsStatus+"]"+"|err["+printError+"]"+"|hw["+hwSwitchState+"]"+"|gcode["+gcodeState+"]"+"|mcper["+mcPercent+"]"+"|mcrtime["+mcRemainingTime+"]");
+            Serial.print("Free memory: ");
+            Serial.print(ESP.getFreeHeap());
+            Serial.println(" bytes");
+            Serial.println("-=-=-=-=-");}
+        lastTime = millis();
     }
     
+    /*
+    step代表了换色进行的五大主要步骤
+    1——收到换色指令，进行规划和分配  红绿蓝
+    2——退料 白色
+    3——进料 黄色
+    4——待命 蓝绿色
+    5——继续 绿色
+    subStep代表子步骤，用于细分主步骤
+    */
     JsonDocument Pdata = getPData();
     if (Pdata["step"] == "1"){
-        if (gcodeState == "PAUSE" and mcPercent == "101" and mcRemainingTime != "null"){
+        if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
             Serial.println("收到换色指令，进入换色准备状态");
-            nextFilament = String(mcRemainingTime.toInt() + 1);
+            leds.setPixelColor(2,leds.Color(255,0,0));
+            leds.setPixelColor(1,leds.Color(0,255,0));
+            leds.setPixelColor(0,leds.Color(0,0,255));
+            leds.show();
+            nextFilament = String(mcPercent.toInt() - 110);
             unloadMsg = false;
             completeMSG = false;
+            sv.pull();
+            mc.stop();
             Serial.println("本机通道"+String(Pdata["filamentID"])+"|上料通道"+String(Pdata["lastFilament"])+"|下一耗材通道"+nextFilament);
-            if (Pdata["filamentID"] == Pdata["lastFilament"] and Pdata["lastFilament"] == nextFilament){
-                Serial.println("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
-                Pdata["step"] = "5";
-                Pdata["subStep"] = "1";
-            }else if (Pdata["filamentID"] == Pdata["lastFilament"]){
-                Serial.println("本机通道["+String(Pdata["filamentID"])+"]在上料");
+
+            if (Pdata["filamentID"] == Pdata["lastFilament"]){
+                Serial.println("本机通道["+String(Pdata["filamentID"])+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
                 if (nextFilament == Pdata["filamentID"]){
-                    Serial.println("下一耗材通道与本机通道相同，无需退料，准备送料");
-                    Pdata["step"] = "3";
+                    Serial.println("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
+                    Pdata["step"] = "5";
                     Pdata["subStep"] = "1";
                 }else{
                     Serial.println("下一耗材通道与本机通道不同，需要换料，准备退料");
@@ -206,7 +249,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
                     Pdata["subStep"] = "1";
                 }
             }else{
-                Serial.println("本机通道["+String(Pdata["filamentID"])+"]不在上料");
+                Serial.println("本机通道["+String(Pdata["filamentID"])+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
                 if (nextFilament == Pdata["filamentID"]){
                     Serial.println("本机通道将要换色，准备送料");
                     Pdata["step"] = String("3");
@@ -217,13 +260,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
                     Pdata["subStep"] = String("1");
                 }
             }
-        }
+        }else{ledAll(0,0,255);}
     }else if (Pdata["step"] == "2"){
         if (Pdata["subStep"] == "1"){
             Serial.println("进入退料状态");
+            leds.clear();
+            leds.setPixelColor(2,leds.Color(255,255,255));
+            leds.show();
             client.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
             Pdata["subStep"] = "2";
         }else if (Pdata["subStep"] == "2"){
+            leds.setPixelColor(1,leds.Color(255,255,255));
+            leds.show();
             if (printError == "318750723") {
                 Serial.println("拔出耗材");
                 sv.push();
@@ -238,6 +286,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
             }
         }else if (Pdata["subStep"] == "3" && amsStatus == "0"){
             Serial.println("退料完成，本次换色完成");
+            leds.setPixelColor(2,leds.Color(255,255,255));
+            leds.show();
             sv.pull();
             mc.stop();
             Pdata["step"] = "4";
@@ -247,6 +297,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
         if (Pdata["subStep"] == "1"){
             if (amsStatus == "0") {
                 Serial.println("进入送料状态");
+                leds.clear();
+                leds.setPixelColor(2,leds.Color(255,255,0));
+                leds.show();
                 client.publish(bambu_topic_publish.c_str(), bambu_load.c_str());
                 Pdata["subStep"] = "2"; // 更新 subStep
             } else {
@@ -256,17 +309,35 @@ void callback(char* topic, byte* payload, unsigned int length) {
                 }else{
                     Serial.print(".");
                 }
+
+                //跑马灯
+                if (inLed == -1){
+                    inLed = 2;
+                    ledAll(0,0,0);
+                }else{
+                    leds.setPixelColor(inLed,leds.Color(255,255,0));
+                    leds.show();
+                    inLed--;
+                }
             }
         }else if (Pdata["subStep"] == "2" && printError == "318750726"){
             Serial.println("送入耗材");
             sv.push();
             mc.forward();
             Pdata["subStep"] = "3";
+
+            leds.clear();
+            leds.setPixelColor(2,leds.Color(255,255,0));
+            leds.setPixelColor(1,leds.Color(255,255,0));
+            leds.show();
         }else if (Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1"){
             Serial.println("停止送料");
             mc.stop();
             client.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
             Pdata["subStep"] = "4";
+
+            leds.setPixelColor(0,leds.Color(255,255,0));
+            leds.show();
         }else if (Pdata["subStep"] == "4"){
             if (hwSwitchState == "0") {
                 Serial.println("检测到送料失败，重新送料!");
@@ -274,22 +345,43 @@ void callback(char* topic, byte* payload, unsigned int length) {
                 delay(2000);
                 mc.stop();
                 Pdata["subStep"] = "1";
+                
+                leds.setPixelColor(2,leds.Color(255,255,0));
+                leds.setPixelColor(1,leds.Color(255,0,0));
+                leds.show();
             } else if (hwSwitchState == "1") {
                 Serial.println("送料成功，等待挤出换料");
                 sv.pull();
                 Pdata["subStep"] = "5"; // 更新 subStep
+
+                leds.setPixelColor(2,leds.Color(255,255,0));
+                leds.setPixelColor(1,leds.Color(0,255,0));
+                leds.show();
             }
         }else if (Pdata["subStep"] == "5"){
             if (printError == "318734343") {
                 if (hwSwitchState == "1"){
                     Serial.println("被虚晃一枪！重新点击确认");
                     client.publish(bambu_topic_publish.c_str(), bambu_done.c_str());
+                    leds.setPixelColor(2,leds.Color(255,255,0));
+                    leds.setPixelColor(1,leds.Color(0,255,0));
+                    leds.setPixelColor(0,leds.Color(0,255,0));
+                    leds.show();
                 }else if (hwSwitchState == "0"){
                     Serial.println("检测到送料失败……进入步骤AGAIN重新送料");
+                    leds.setPixelColor(2,leds.Color(255,255,0));
+                    leds.setPixelColor(1,leds.Color(255,0,0));
+                    leds.setPixelColor(0,leds.Color(255,0,0));
+                    leds.show();
+                    sv.push();
+                    mc.backforward();
+                    delay(2000);
+                    mc.stop();
                     Pdata["subStep"] = "AGAIN";
                 }
             } else if (amsStatus == "768") {
                 Serial.println("芜湖~换料完成！");
+                ledAll(0,255,0);
                 delay(1000);
                 client.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
                 Pdata["step"] = "4";
@@ -298,7 +390,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }else if (Pdata["subStep"] == "AGAIN"){
             if (hwSwitchState == "0"){
                 Serial.println("尝试重新送料");
-                sv.push();
                 mc.forward();
             }else if (hwSwitchState == "1"){
                 Serial.println("送料成功!");
@@ -314,11 +405,23 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }else{
             Serial.print(".");
         }
+
+        //跑马灯
+        if (waitLed == -1){
+            waitLed = 2;
+            ledAll(0,0,0);
+        }else{
+            leds.setPixelColor(waitLed,leds.Color(0,255,255));
+            leds.show();
+            waitLed--;
+        }
+
         if (amsStatus == "1280") {
             Serial.println("换色完成！切换上料通道为["+nextFilament+"]");
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
             Pdata["lastFilament"] = nextFilament;
+            ledAll(0,255,0);
         }
     }else if (Pdata["step"] == "5"){
         client.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
@@ -328,10 +431,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }else{
             Serial.print(".");
         }
+        
+        //跑马灯
+        if (completeLed == -1){
+            completeLed = 2;
+            ledAll(0,0,0);
+        }else{
+            leds.setPixelColor(completeLed,leds.Color(0,255,255));
+            leds.show();
+            completeLed--;
+        }
+
         if (amsStatus == "1280") {
             Serial.println("完成!");
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
+            ledAll(0,255,0);
         }
     }
     
@@ -345,9 +460,15 @@ void timerCallback() {
 }
 
 void setup() {
+    leds.begin();
     Serial.begin(115200);
     LittleFS.begin();
+    delay(1);
+    leds.clear();
+    leds.show();
+
     if (!LittleFS.exists("/config.json")) {
+        ledAll(255,0,0);
         Serial.println("");
         Serial.println("不存在配置文件!创建配置文件!");
         Serial.println("1.请输入wifi名:");
@@ -355,41 +476,62 @@ void setup() {
             delay(100);
         }
         wifiName = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+wifiName);
 
+        delay(500);
+        ledAll(255,0,0);
+        
         Serial.println("2.请输入wifi密码:");
         while (!(Serial.available() > 0)){
             delay(100);
         }
         wifiKey = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+wifiKey);
         
+        delay(500);
+        ledAll(255,0,0);
+
         Serial.println("3.请输入拓竹打印机的ip地址:");
         while (!(Serial.available() > 0)){
             delay(100);
         }
         bambu_mqtt_broker = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+bambu_mqtt_broker);
+        
+        delay(500);
+        ledAll(255,0,0);
 
         Serial.println("4.请输入拓竹打印机的访问码:");
         while (!(Serial.available() > 0)){
             delay(100);
         }
         bambu_mqtt_password = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+bambu_mqtt_password);
+        
+        delay(500);
+        ledAll(255,0,0);
         
         Serial.println("5.请输入拓竹打印机的序列号:");
         while (!(Serial.available() > 0)){
             delay(100);
         }
         bambu_device_serial = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+bambu_device_serial);
+        
+        delay(500);
+        ledAll(255,0,0);
     
         Serial.println("6.请输入本机通道编号:");
         while (!(Serial.available() > 0)){
             delay(100);
         }
         filamentID = Serial.readString();
+        ledAll(0,255,0);
         Serial.println("获取到的数据-> "+filamentID);
         
         JsonDocument Cdata;
@@ -399,6 +541,8 @@ void setup() {
         Cdata["bambu_mqtt_password"] = bambu_mqtt_password;
         Cdata["bambu_device_serial"] = bambu_device_serial;
         Cdata["filamentID"] = filamentID;
+        Cdata["ledBrightness"] = 100;
+        ledBrightness = 100;
         writeCData(Cdata);
     }else{
         JsonDocument Cdata = getCData();
@@ -409,13 +553,17 @@ void setup() {
         bambu_mqtt_password = Cdata["bambu_mqtt_password"].as<String>();
         bambu_device_serial = Cdata["bambu_device_serial"].as<String>();
         filamentID = Cdata["filamentID"].as<String>();
+        ledBrightness = Cdata["ledBrightness"].as<unsigned int>();
+        ledAll(0,255,0);
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
     bambu_topic_publish = "device/" + String(bambu_device_serial) + "/request";
+    leds.setBrightness(ledBrightness);
 
     connectWF(wifiName,wifiKey);
 
     servo.attach(servoPin,500,2500);
+    //servo.write(20);//初始20°方便后续调试
 
     espClient.setInsecure();
     client.setServer(bambu_mqtt_broker.c_str(), 8883);
@@ -448,11 +596,19 @@ void loop() {
     if (!client.connected()) {
         connectMQTT();
     }
+
     client.loop();
-    if (millis()-lastTime > 2000){
-        lastTime = millis();
+
+    if (millis()-lastTime > renewTime and millis()-checkTime > renewTime*0.8){
         timerCallback();
+        checkTime = millis();
+        leds.setPixelColor(0,leds.Color(10,255,10));
+        leds.show();
+        delay(10);
+        leds.setPixelColor(0,leds.Color(0,0,0));
+        leds.show();
     }
+
     if (Serial.available()>0){
         String content = Serial.readString();
         if (content=="delet config"){
@@ -502,6 +658,36 @@ void loop() {
         }else if (content == "stop"){
             mc.stop();
             Serial.println("Stop!");
-        }        
+        }else if (content.indexOf("renewTime") != -1 or content.indexOf("rt") != -1)        {
+            String numberString = "";
+            for (unsigned int i = 0; i < content.length(); i++) {
+            if (isdigit(content[i])) {
+                numberString += content[i];
+            }}
+            unsigned int number = numberString.toInt();
+            renewTime = number;
+            Serial.println("["+numberString+"]COMPLETE");
+        } else if (content.indexOf("ledbright") != -1 or content.indexOf("lb") != -1)        {
+            String numberString = "";
+            for (unsigned int i = 0; i < content.length(); i++) {
+            if (isdigit(content[i])) {
+                numberString += content[i];
+            }}
+            unsigned int number = numberString.toInt();
+            ledBrightness = number;
+            JsonDocument Cdata = getCData();
+            Cdata["ledBrightness"] = ledBrightness;
+            writeCData(Cdata);
+            Serial.println("["+numberString+"]修改成功！亮度重启后生效");
+        }  else if (content == "rgb"){
+            Serial.println("RGB Testing......");
+            ledAll(255,0,0);
+            delay(1000);
+            ledAll(0,255,0);
+            delay(1000);
+            ledAll(0,0,255);
+            delay(1000);
+        }
     }
+    
 }
