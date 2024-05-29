@@ -230,7 +230,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
             leds.setPixelColor(1,leds.Color(0,255,0));
             leds.setPixelColor(0,leds.Color(0,0,255));
             leds.show();
-            nextFilament = String(mcPercent.toInt() - 110);
+            nextFilament = String(mcPercent.toInt() - 110 + 1);
             unloadMsg = false;
             completeMSG = false;
             sv.pull();
