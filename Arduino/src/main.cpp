@@ -34,6 +34,8 @@ String bambu_status = "{\"pushing\": {\"sequence_id\": \"0\", \"command\": \"pus
 int servoPin = 13;//舵机引脚
 int motorPin1 = 4;//电机一号引脚
 int motorPin2 = 5;//电机二号引脚
+int bufferPin1 = 14;//缓冲器1
+int bufferPin2 = 16;//缓冲器2
 unsigned int renewTime = 1250;//定时任务刷新时间
 unsigned int ledBrightness;//led默认亮度
 #define ledPin 12//led引脚
@@ -69,9 +71,11 @@ void ledAll(unsigned int r, unsigned int g, unsigned int b) {//led填充
 void connectWF(String wn,String wk) {
     ledAll(0,0,0);
     int led = 2;
+    int count = 1;
     WiFi.begin(wn, wk);
     Serial.print("连接到wifi [" + String(wifiName) + "]");
     while (WiFi.status() != WL_CONNECTED) {
+        count ++;
         if (led == -1){
             led = 2;
             ledAll(0,0,0);
@@ -82,6 +86,24 @@ void connectWF(String wn,String wk) {
         }
         Serial.print(".");
         delay(250);
+        if (count > 100){
+            ledAll(255,0,0);
+            Serial.println("WIFI连接超时!请检查你的wifi配置");
+            Serial.println("WIFI名["+String(wifiName)+"]");
+            Serial.println("WIFI密码["+String(wifiKey)+"]");
+            Serial.println("本次输出[]内没有内置空格!");
+            Serial.println("你将有两种选择:");
+            Serial.println("1:已经确认我的wifi配置没有问题!继续重试!");
+            Serial.println("2:我的配置有误,删除配置重新书写");
+            Serial.println("请输入你的选择:");
+            while (Serial.available() == 0){
+                Serial.print(".");
+                delay(100);
+            }
+            String content = Serial.readString();
+            if (content == "2"){if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}}
+            ESP.restart();
+        }
     }
     Serial.println("");
     Serial.println("WIFI已连接");
@@ -129,6 +151,7 @@ class Machinery {
   private:
     int pin1;
     int pin2;
+    bool isStop = true;
   public:
     Machinery(int pin1, int pin2) {
       this->pin1 = pin1;
@@ -140,16 +163,23 @@ class Machinery {
     void forward() {
       digitalWrite(pin1, HIGH);
       digitalWrite(pin2, LOW);
+      isStop = false;
     }
 
     void backforward() {
       digitalWrite(pin1, LOW);
       digitalWrite(pin2, HIGH);
+      isStop = false;
     }
 
     void stop() {
       digitalWrite(pin1, HIGH);
       digitalWrite(pin2, HIGH);
+      isStop = true;
+    }
+
+    bool getStopState() {
+        return isStop;
     }
 };
 class ServoControl {
@@ -172,7 +202,9 @@ Machinery mc(motorPin1, motorPin2);
 
 //连接mqtt
 void connectMQTT() {
+    int count = 1;
     while (!client.connected()) {
+        count ++;
         Serial.println("尝试连接拓竹mqtt|"+bambu_mqtt_id+"|"+bambu_mqtt_user+"|"+bambu_mqtt_password);
         if (client.connect(bambu_mqtt_id.c_str(), bambu_mqtt_user.c_str(), bambu_mqtt_password.c_str())) {
             Serial.println("连接成功!");
@@ -185,6 +217,26 @@ void connectMQTT() {
             Serial.println("在一秒后重新连接");
             delay(1000);
             ledAll(255,0,0);
+        }
+
+        if (count > 30){
+            ledAll(255,0,0);
+            Serial.println("拓竹连接超时!请检查你的配置");
+            Serial.println("拓竹ip地址["+String(bambu_mqtt_broker)+"]");
+            Serial.println("拓竹序列号["+String(bambu_device_serial)+"]");
+            Serial.println("拓竹访问码["+String(bambu_mqtt_password)+"]");
+            Serial.println("本次输出[]内没有内置空格!");
+            Serial.println("你将有两种选择:");
+            Serial.println("1:已经确认我的配置没有问题!继续重试!");
+            Serial.println("2:我的配置有误,删除配置重新书写");
+            Serial.println("请输入你的选择:");
+            while (Serial.available() == 0){
+                Serial.print(".");
+                delay(100);
+            }
+            String content = Serial.readString();
+            if (content == "2"){if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}}
+            ESP.restart();
         }
     }
 }
@@ -202,7 +254,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     String mcRemainingTime = (*data)["print"]["mc_remaining_time"].as<String>();
     // 手动释放内存
     delete data;
-    
+
     if (!(amsStatus == printError && printError == hwSwitchState && hwSwitchState == gcodeState && gcodeState == mcPercent && mcPercent == mcRemainingTime && mcRemainingTime == "null")) {
         if (debug){
             Serial.println(sequenceId+"|ams["+amsStatus+"]"+"|err["+printError+"]"+"|hw["+hwSwitchState+"]"+"|gcode["+gcodeState+"]"+"|mcper["+mcPercent+"]"+"|mcrtime["+mcRemainingTime+"]");
@@ -330,7 +382,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
             leds.setPixelColor(2,leds.Color(255,255,0));
             leds.setPixelColor(1,leds.Color(255,255,0));
             leds.show();
-        }else if (Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1"){
+        }else if ((Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
             Serial.println("停止送料");
             mc.stop();
             client.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
@@ -565,6 +617,11 @@ void setup() {
     servo.attach(servoPin,500,2500);
     //servo.write(20);//初始20°方便后续调试
 
+    pinMode(bufferPin1, OUTPUT);
+    pinMode(bufferPin2, OUTPUT);
+    digitalWrite(bufferPin1, LOW);
+    digitalWrite(bufferPin2, LOW);
+
     espClient.setInsecure();
     client.setServer(bambu_mqtt_broker.c_str(), 8883);
     client.setCallback(callback);
@@ -607,6 +664,12 @@ void loop() {
         delay(10);
         leds.setPixelColor(0,leds.Color(0,0,0));
         leds.show();
+    }
+
+    if (not mc.getStopState()){
+        if (digitalRead(bufferPin1) == 1 or digitalRead(bufferPin2) == 1){
+        mc.stop();}
+        delay(500);
     }
 
     if (Serial.available()>0){
