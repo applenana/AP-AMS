@@ -29,7 +29,8 @@ _✨ 一个简单的适用于拓竹的自动换色系统 ✨_
   - makerworld中提到的部分[材料](https://makerworld.com/zh/models/463829#profileId-372457)
   - 立创开源广场的[材料](https://oshwhub.com/applenana/apams)
   - 这里的release(固件)!
-- (待续)
+- 初始化配置参考[这里](https://github.com/llleeeqi/AP-AMS/blob/main/doc/%E9%85%8D%E7%BD%AE.md)
+- 待续
 
 ## 提示
 - micropython版本已经弃用,原因是内存无法支撑其在esp8266中运行,你可以尝试在esp32中运行它(不建议)
