@@ -37,13 +37,13 @@ int motorPin2 = 5;//电机二号引脚
 int bufferPin1 = 14;//缓冲器1
 int bufferPin2 = 16;//缓冲器2
 unsigned int renewTime = 1250;//定时任务刷新时间
+int backTime = 1000;
 unsigned int ledBrightness;//led默认亮度
 #define ledPin 12//led引脚
 #define ledPixels 3//led数量
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
-String nextFilament;
 bool unloadMsg;
 bool completeMSG;
 //-=-=-=-=-=-=end
@@ -282,7 +282,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
             leds.setPixelColor(1,leds.Color(0,255,0));
             leds.setPixelColor(0,leds.Color(0,0,255));
             leds.show();
-            nextFilament = String(mcPercent.toInt() - 110 + 1);
+            String nextFilament = String(mcPercent.toInt() - 110 + 1);
+            Pdata["nextFilament"] = nextFilament;
             unloadMsg = false;
             completeMSG = false;
             sv.pull();
@@ -340,6 +341,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
             Serial.println("退料完成，本次换色完成");
             leds.setPixelColor(2,leds.Color(255,255,255));
             leds.show();
+            delay(backTime);
             sv.pull();
             mc.stop();
             Pdata["step"] = "4";
@@ -468,7 +470,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
             waitLed--;
         }
 
-        if (amsStatus == "1280") {
+        if (amsStatus == "1280" and gcodeState != "PAUSE") {
+            String nextFilament = Pdata["nextFilament"].as<String>();
             Serial.println("换色完成！切换上料通道为["+nextFilament+"]");
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
@@ -586,6 +589,18 @@ void setup() {
         ledAll(0,255,0);
         Serial.println("获取到的数据-> "+filamentID);
         
+        delay(500);
+        ledAll(255,0,0);
+    
+        Serial.println("7.请输入回抽延时[单位毫秒]:");
+        while (!(Serial.available() > 0)){
+            delay(100);
+        }
+
+        backTime = Serial.readString().toInt();
+        ledAll(0,255,0);
+        Serial.println("获取到的数据-> "+String(backTime));
+
         JsonDocument Cdata;
         Cdata["wifiName"] = wifiName;
         Cdata["wifiKey"] = wifiKey;
@@ -594,6 +609,7 @@ void setup() {
         Cdata["bambu_device_serial"] = bambu_device_serial;
         Cdata["filamentID"] = filamentID;
         Cdata["ledBrightness"] = 100;
+        Cdata["backTime"] = backTime;
         ledBrightness = 100;
         writeCData(Cdata);
     }else{
@@ -606,6 +622,7 @@ void setup() {
         bambu_device_serial = Cdata["bambu_device_serial"].as<String>();
         filamentID = Cdata["filamentID"].as<String>();
         ledBrightness = Cdata["ledBrightness"].as<unsigned int>();
+        backTime = Cdata["backTime"].as<int>();
         ledAll(0,255,0);
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
