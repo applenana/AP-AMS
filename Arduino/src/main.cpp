@@ -642,6 +642,7 @@ void setup() {
     espClient.setInsecure();
     client.setServer(bambu_mqtt_broker.c_str(), 8883);
     client.setCallback(callback);
+    client.setBufferSize(4096);
     
     if (!LittleFS.exists("/data.json")) {
         JsonDocument Pdata;
