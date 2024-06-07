@@ -50,10 +50,10 @@ unsigned int ledBrightness;//led默认亮度
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
-String nextFilament;
-String onFilament;
-String step;
-String subStep;
+//String nextFilament;
+//String onFilament;
+//String step;
+//String subStep;
 bool unloadMsg;
 bool completeMSG;
 //-=-=-=-=-=-=end
@@ -143,7 +143,7 @@ void writePData(JsonDocument Pdata){
         file.close();
     } else {
         Serial.println("错误：数据缺少必要的参数，无法存储。");
-        ledAll(255,0,0);
+        if(LittleFS.remove("/data.json")){Serial.println("SUCCESS!");ESP.restart();}
     }
 }
 
@@ -312,9 +312,6 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     subStep代表子步骤，用于细分主步骤
     */
     JsonDocument Pdata = getPData();
-    onFilament = Pdata["lastFilament"].as<String>();
-    step = Pdata["step"].as<String>();
-    subStep = Pdata["subStep"].as<String>();
     if (Pdata["step"] == "1"){
         if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
             Serial.println("收到换色指令，进入换色准备状态");
@@ -322,7 +319,8 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             leds.setPixelColor(1,leds.Color(0,255,0));
             leds.setPixelColor(0,leds.Color(0,0,255));
             leds.show();
-            nextFilament = String(mcPercent.toInt() - 110 + 1);
+            String nextFilament = String(mcPercent.toInt() - 110 + 1);
+            Pdata["nextFilament"] = nextFilament;
             unloadMsg = false;
             completeMSG = false;
             sv.pull();
@@ -508,7 +506,8 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             waitLed--;
         }
 
-        if (amsStatus == "1280") {
+        if (amsStatus == "1280" and gcodeState != "PAUSE") {
+            String nextFilament = Pdata["nextFilament"];
             Serial.println("换色完成！切换上料通道为["+nextFilament+"]");
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
@@ -599,10 +598,8 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
         sv.writeAngle(data["value"].as<String>().toInt());
     }else if (data["command"] == "step"){
         PData["step"] = data["value"].as<String>();
-        step = data["value"].as<String>();
     }else if (data["command"] == "subStep"){
         PData["subStep"] = data["value"].as<String>();
-        subStep = data["value"].as<String>();
     }else if (data["command"] == "wifiName"){
         CData["wifiName"] = data["value"].as<String>();
         wifiName = data["value"].as<String>();
@@ -641,11 +638,11 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     writePData(PData);
     writeCData(CData);
     haClient.publish(("AMS/"+filamentID+"/nowTun").c_str(),filamentID.c_str());
-    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),nextFilament.c_str());
-    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),onFilament.c_str());
+    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),PData["nextFilament"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),PData["lastFilament"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/svAng").c_str(),String(sv.getAngle()).c_str());
-    haClient.publish(("AMS/"+filamentID+"/step").c_str(),step.c_str());
-    haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),subStep.c_str());
+    haClient.publish(("AMS/"+filamentID+"/step").c_str(),PData["step"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),PData["subStep"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/wifiName").c_str(),wifiName.c_str());
     haClient.publish(("AMS/"+filamentID+"/wifiKey").c_str(),wifiKey.c_str());
     haClient.publish(("AMS/"+filamentID+"/bambuIPAD").c_str(),bambu_mqtt_broker.c_str());
@@ -664,12 +661,13 @@ void bambuTimerCallback() {
 //定时任务
 void haTimerCallback() {
     if (debug){Serial.println("ha定时任务执行！");}
+    JsonDocument PData = getPData();
     haClient.publish(("AMS/"+filamentID+"/nowTun").c_str(),filamentID.c_str());
-    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),nextFilament.c_str());
-    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),onFilament.c_str());
+    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),PData["nextFilament"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),PData["lastFilament"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/svAng").c_str(),String(sv.getAngle()).c_str());
-    haClient.publish(("AMS/"+filamentID+"/step").c_str(),step.c_str());
-    haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),subStep.c_str());
+    haClient.publish(("AMS/"+filamentID+"/step").c_str(),PData["step"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),PData["subStep"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/wifiName").c_str(),wifiName.c_str());
     haClient.publish(("AMS/"+filamentID+"/wifiKey").c_str(),wifiKey.c_str());
     haClient.publish(("AMS/"+filamentID+"/bambuIPAD").c_str(),bambu_mqtt_broker.c_str());
@@ -868,16 +866,16 @@ void setup() {
     servo.attach(servoPin,500,2500);
     //servo.write(20);//初始20°方便后续调试
 
-    pinMode(bufferPin1, OUTPUT);
-    pinMode(bufferPin2, OUTPUT);
-    digitalWrite(bufferPin1, LOW);
-    digitalWrite(bufferPin2, LOW);
+    pinMode(bufferPin1, INPUT_PULLDOWN_16);
+    pinMode(bufferPin2, INPUT_PULLDOWN_16);
 
     bambuWifiClient.setInsecure();
     bambuClient.setServer(bambu_mqtt_broker.c_str(), 8883);
     bambuClient.setCallback(bambuCallback);
+    bambuClient.setBufferSize(4096);
     haClient.setServer(ha_mqtt_broker.c_str(),1883);
     haClient.setCallback(haCallback);
+    haClient.setBufferSize(4096);
     
     if (!LittleFS.exists("/data.json")) {
         JsonDocument Pdata;
