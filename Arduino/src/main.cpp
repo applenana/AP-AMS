@@ -44,6 +44,7 @@ int bufferPin1 = 14;//缓冲器1
 int bufferPin2 = 16;//缓冲器2
 unsigned int bambuRenewTime = 1250;//拓竹更新时间
 unsigned int haRenewTime = 3000;//ha推送时间
+int backTime = 1000;
 unsigned int ledBrightness;//led默认亮度
 #define ledPin 12//led引脚
 #define ledPixels 3//led数量
@@ -378,6 +379,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             Serial.println("退料完成，本次换色完成");
             leds.setPixelColor(2,leds.Color(255,255,255));
             leds.show();
+            delay(backTime);
             sv.pull();
             mc.stop();
             Pdata["step"] = "4";
@@ -676,6 +678,7 @@ void haTimerCallback() {
     haClient.publish(("AMS/"+filamentID+"/LedBri").c_str(),String(ledBrightness).c_str());
     haClient.publish(("AMS/"+filamentID+"/mcState").c_str(),mc.getState().c_str());
     haClient.publish(("AMS/"+filamentID+"/svState").c_str(),sv.getState().c_str());
+    haClient.publish(("AMS/"+filamentID+"/backTime").c_str(),String(backTime).c_str());
 
     haLastTime = millis();
 }
@@ -827,6 +830,18 @@ void setup() {
         }
         ledAll(0,255,0);
         Serial.println("获取到的数据-> "+tmpmessage);
+
+        delay(500);
+        ledAll(255,0,0);
+
+        Serial.println("10.请输入回抽延时[单位毫秒]:");
+        while (!(Serial.available() > 0)){
+            delay(100);
+        }
+
+        backTime = Serial.readString().toInt();
+        ledAll(0,255,0);
+        Serial.println("获取到的数据-> "+String(backTime));
         
         JsonDocument Cdata;
         Cdata["wifiName"] = wifiName;
@@ -839,6 +854,7 @@ void setup() {
         Cdata["ha_mqtt_broker"] = ha_mqtt_broker;
         Cdata["ha_mqtt_user"] = ha_mqtt_user;
         Cdata["ha_mqtt_password"] = ha_mqtt_password;
+        Cdata["backTime"] = backTime;
         ledBrightness = 100;
         writeCData(Cdata);
     }else{
@@ -854,6 +870,7 @@ void setup() {
         ha_mqtt_broker = Cdata["ha_mqtt_broker"].as<String>();
         ha_mqtt_user = Cdata["ha_mqtt_user"].as<String>();
         ha_mqtt_password = Cdata["ha_mqtt_password"].as<String>();
+        backTime = Cdata["backTime"].as<int>();
         ledAll(0,255,0);
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
@@ -897,35 +914,35 @@ void setup() {
     connectBambuMQTT();
     connectHaMQTT();
 
-    if (!LittleFS.exists("/ha.json")){
-        JsonDocument haData;
-        JsonArray discoverList = haData["discovery_topic"].to<JsonArray>();
+    JsonDocument haData;
+    JsonArray discoverList = haData["discovery_topic"].to<JsonArray>();
 
-        discoverList = initText("上料通道",filamentID,"onTun",discoverList);
-        discoverList = initText("舵机角度",filamentID,"svAng",discoverList);
-        discoverList = initText("主要步骤",filamentID,"step",discoverList);
-        discoverList = initText("次要步骤",filamentID,"subStep",discoverList);
-        discoverList = initText("WIFI名",filamentID,"wifiName",discoverList);
-        discoverList = initText("WIFI密码",filamentID,"wifiKey",discoverList);
-        discoverList = initText("拓竹IP地址",filamentID,"bambuIPAD",discoverList);
-        discoverList = initText("拓竹序列号",filamentID,"bambuSID",discoverList);
-        discoverList = initText("拓竹访问码",filamentID,"bambuKey",discoverList);
-        discoverList = initText("LED亮度",filamentID,"LedBri",discoverList);
-        discoverList = initText("执行指令",filamentID,"command",discoverList);
-        discoverList = initSelect("电机状态",filamentID,"mcState","\"前进\",\"后退\",\"停止\"",discoverList);
-        discoverList = initSelect("舵机状态",filamentID,"svState","\"推\",\"拉\",\"自定义角度\"",discoverList);
-        discoverList = initSensor("状态",filamentID,"state",discoverList);
-        //discoverList = initSensor("配置信息",filamentID,"configInfo",discoverList);
-        discoverList = initSensor("本机通道",filamentID,"nowTun",discoverList);
-        discoverList = initSensor("下一通道",filamentID,"nextTun",discoverList);
+    discoverList = initText("上料通道",filamentID,"onTun",discoverList);
+    discoverList = initText("舵机角度",filamentID,"svAng",discoverList);
+    discoverList = initText("主要步骤",filamentID,"step",discoverList);
+    discoverList = initText("次要步骤",filamentID,"subStep",discoverList);
+    discoverList = initText("WIFI名",filamentID,"wifiName",discoverList);
+    discoverList = initText("WIFI密码",filamentID,"wifiKey",discoverList);
+    discoverList = initText("拓竹IP地址",filamentID,"bambuIPAD",discoverList);
+    discoverList = initText("拓竹序列号",filamentID,"bambuSID",discoverList);
+    discoverList = initText("拓竹访问码",filamentID,"bambuKey",discoverList);
+    discoverList = initText("LED亮度",filamentID,"LedBri",discoverList);
+    discoverList = initText("执行指令",filamentID,"command",discoverList);
+    discoverList = initText("回抽延时",filamentID,"backTime",discoverList);
+    discoverList = initSelect("电机状态",filamentID,"mcState","\"前进\",\"后退\",\"停止\"",discoverList);
+    discoverList = initSelect("舵机状态",filamentID,"svState","\"推\",\"拉\",\"自定义角度\"",discoverList);
+    discoverList = initSensor("状态",filamentID,"state",discoverList);
+    //discoverList = initSensor("配置信息",filamentID,"configInfo",discoverList);
+    discoverList = initSensor("本机通道",filamentID,"nowTun",discoverList);
+    discoverList = initSensor("下一通道",filamentID,"nextTun",discoverList);
 
-        File file = LittleFS.open("/ha.json", "w");
-        serializeJson(haData, file);
-        Serial.println("初始化ha成功!");
-        Serial.println("");
-        serializeJsonPretty(haData,Serial);
-        Serial.println("");
-    }
+
+    File file = LittleFS.open("/ha.json", "w");
+    serializeJson(haData, file);
+    Serial.println("初始化ha成功!");
+    Serial.println("");
+    serializeJsonPretty(haData,Serial);
+    Serial.println("");
     
     Serial.println("-=-=-=setup执行完成!=-=-=-");
 }
@@ -964,7 +981,7 @@ void loop() {
     if (not mc.getStopState()){
         if (digitalRead(bufferPin1) == 1 or digitalRead(bufferPin2) == 1){
         mc.stop();}
-        delay(500);
+        delay(100);
     }
 
     if (Serial.available()>0){
