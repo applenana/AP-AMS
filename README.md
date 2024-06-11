@@ -28,14 +28,14 @@ _✨ 一个简单的适用于拓竹的自动换色系统 ✨_
   - 一颗能沉下心来折腾的心
   - makerworld中提到的部分[材料](https://makerworld.com/zh/models/463829#profileId-372457)
   - 立创开源广场的[材料](https://oshwhub.com/applenana/apams)
-  - 这里的release(固件)!
+  - 这里的[release](https://github.com/applenana/AP-AMS/releases/)(固件)!
 - （待续）
 
 ## 提示
-- micropython版本已经弃用,原因是内存无法支撑其在esp8266中运行,你可以尝试在esp32中运行它(不建议)
-- 项目仍未完成……请实时关注项目的更新,很有可能解决重大问题
+- 项目基本完成，如遇bug请发issue或加入QQ群946045238
 - 模型和gcode已上传至[makerworld](https://makerworld.com/zh/@applenana)
 - PCB上传至[立创开源广场](https://oshwhub.com/applenana/apams)
+- micropython版本已经弃用,原因是内存无法支撑其在esp8266中运行,你可以尝试在esp32中运行它(不建议)
 
 ## 鸣谢
 - 整个项目的整体思路和部分资料来源于[YBA0312的YBA-AMS项目](https://github.com/YBA0312/YBA-AMS-ESP)!
