@@ -24,7 +24,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.0.1";
+String sw_version = "v2.1";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String ha_mqtt_id = "ams";
@@ -38,7 +38,7 @@ String bambu_done = "{\"print\":{\"command\":\"ams_control\",\"param\":\"done\",
 String bambu_clear = "{\"print\":{\"command\": \"clean_print_error\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}";
 String bambu_status = "{\"pushing\": {\"sequence_id\": \"0\", \"command\": \"pushall\"}}";
 //String bambu_pause = "{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M400U1\"},\"user_id\": \"1\"}";
-String bambu_pause = "{\"print\":{\"command\":\"pause\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}";
+//String bambu_pause = "{\"print\":{\"command\":\"pause\",\"sequence_id\":\"1\"},\"user_id\":\"1\"}";
 int servoPin = 13;//舵机引脚
 int motorPin1 = 4;//电机一号引脚
 int motorPin2 = 5;//电机二号引脚
@@ -53,13 +53,10 @@ unsigned int ledBrightness;//led默认亮度
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
-//String nextFilament;
-//String onFilament;
-//String step;
-//String subStep;
 bool unloadMsg;
 bool completeMSG;
 bool reSendUnload;
+String commandStr = "";//命令传输
 //-=-=-=-=-=-=end
 
 unsigned long lastMsg = 0;
@@ -323,7 +320,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     */
     JsonDocument Pdata = getPData();
     if (Pdata["step"] == "1"){
-        if (mcPercent.toInt() > 100){
+        if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
             statePublish("收到换色指令，进入换色准备状态");
             leds.setPixelColor(2,leds.Color(255,0,0));
             leds.setPixelColor(1,leds.Color(0,255,0));
@@ -346,7 +343,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                     Pdata["step"] = "5";
                     Pdata["subStep"] = "1";
                 }else{
-                    bambuClient.publish(bambu_topic_publish.c_str(),bambu_pause.c_str());
+                    //bambuClient.publish(bambu_topic_publish.c_str(),bambu_pause.c_str());
                     statePublish("下一耗材通道与本机通道不同，需要换料，准备退料");
                     Pdata["step"] = "2";
                     Pdata["subStep"] = "1";
@@ -370,7 +367,8 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             leds.clear();
             leds.setPixelColor(2,leds.Color(255,255,255));
             leds.show();
-            //bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+            bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+            reSendUnload = true;
             Pdata["subStep"] = "2";
         }else if (Pdata["subStep"] == "2"){
             leds.setPixelColor(1,leds.Color(255,255,255));
@@ -611,6 +609,7 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     // 手动释放内存
     JsonDocument PData = getPData();
     JsonDocument CData = getCData();
+
     if (data["command"] == "onTun"){
         PData["lastFilament"] = data["value"].as<String>();
     }else if (data["command"] == "svAng"){
@@ -638,7 +637,9 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
         ledBrightness = data["value"].as<String>().toInt();
         leds.setBrightness(ledBrightness);
     }else if (data["command"] == "command"){
-
+        commandStr = data["value"].as<String>();
+        haClient.publish(("AMS/"+filamentID+"/command").c_str(),data["value"].as<String>().c_str());
+        haClient.publish(("AMS/"+filamentID+"/command").c_str(),"");
     }else if (data["command"] == "mcState"){
         if (data["value"] == "前进"){
             mc.forward();
@@ -960,7 +961,6 @@ void setup() {
     Serial.println("");
     serializeJsonPretty(haData,Serial);
     Serial.println("");
-    
     Serial.println("-=-=-=setup执行完成!=-=-=-");
 }
 
@@ -1001,8 +1001,16 @@ void loop() {
         delay(100);
     }
 
-    if (Serial.available()>0){
-        String content = Serial.readString();
+    if (Serial.available()>0 or commandStr != ""){
+
+        String content;
+        if (Serial.available()>0){
+            content = Serial.readString();
+        }else if (commandStr != ""){
+            content = commandStr;
+            commandStr = "";
+        }
+
         if (content=="delet config"){
             if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}
         }else if (content == "delet data")
