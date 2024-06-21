@@ -398,7 +398,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
                 mc.backforward();
                 delay(2000);
                 mc.stop();
-                Pdata["subStep"] = "1";
+                Pdata["subStep"] = "2";
                 
                 leds.setPixelColor(2,leds.Color(255,255,0));
                 leds.setPixelColor(1,leds.Color(255,0,0));
@@ -634,10 +634,8 @@ void setup() {
     servo.attach(servoPin,500,2500);
     //servo.write(20);//初始20°方便后续调试
 
-    pinMode(bufferPin1, OUTPUT);
-    pinMode(bufferPin2, OUTPUT);
-    digitalWrite(bufferPin1, LOW);
-    digitalWrite(bufferPin2, LOW);
+    pinMode(bufferPin1, INPUT_PULLDOWN_16);
+    pinMode(bufferPin2, INPUT_PULLDOWN_16);
 
     espClient.setInsecure();
     client.setServer(bambu_mqtt_broker.c_str(), 8883);
