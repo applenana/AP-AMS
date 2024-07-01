@@ -658,8 +658,7 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
         }else if (data["value"] == "拉"){
             sv.pull();
         }
-    }else if (String(data["command"]).indexOf("filaLig") != -1)
-    {
+    }else if (String(data["command"]).indexOf("filaLig") != -1){
         if (String(data["command"]).indexOf("swi") != -1){
             if (data["value"] == "ON"){
                 leds.setBrightness(ledBrightness);
@@ -687,7 +686,14 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
 
             CData["filamentColorRGB"] = filamentColorRGB;
         }
+    }else if (data["command"] == "filamentTemp"){
+        filamentTemp = data["value"].as<int>();
+        CData["filamentTemp"] = filamentTemp;
+    }else if (data["command"] == "filamentType"){
+        filamentType = data["value"].as<String>();
+        CData["filamentType"] = filamentType;
     }
+    
     
     writePData(PData);
     writeCData(CData);
@@ -708,6 +714,8 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     haClient.publish(("AMS/"+filamentID+"/filaLig/bri").c_str(),String(ledBrightness).c_str());
     haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),
     (filamentColorRGB[0].as<String>()+","+filamentColorRGB[1].as<String>()+","+filamentColorRGB[2].as<String>()).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filamentTemp").c_str(),String(filamentTemp).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filamentType").c_str(),String(filamentType).c_str());
 }
 
 //定时任务
@@ -774,16 +782,16 @@ JsonArray initSelect(String name,String id,String detail,String options,JsonArra
 
 JsonArray initLight(String name,String id,String detail,JsonArray array){
     String topic = "homeassistant/light/ams"+id+detail+"/config";
-    String json = "{\"name\":\""+name+"\""
-    +",\"state_topic\":\"AMS/"+id+"/"+detail+"/swi\",\"command_topic\":\"AMS/"+id+"/"+detail+"\","
-    +"\"brightness_state_topic\":\"AMS/"+id+"/"+detail+"/bri\",\"brightness_command_topic\":\"AMS/"+id+"/"+detail+"\","
-    +"\"brightness_command_template\":\"{\\\"command\\\":\\\""+detail+"bri\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
-    +"\"rgb_state_topic\":\"AMS/"+id+"/"+detail+"/rgb\",\"rgb_command_topic\":\"AMS/"+id+"/"+detail+"\","
-    +"\"rgb_command_template\":\"{\\\"command\\\":\\\""+detail+"rgb\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
-    +"\"unique_id\":\"ams"+"light"+id+detail+"\","
-    +"\"payload_on\":\"{\\\"command\\\":\\\""+detail+"swi\\\",\\\"value\\\":\\\"ON\\\"}\","
-    +"\"payload_off\":\"{\\\"command\\\":\\\""+detail+"swi\\\",\\\"value\\\":\\\"OFF\\\"}\""
-    +"\"device\":{\"identifiers\":\"APAMS"+id+"\",\"name\":\"AP-AMS-"+id+"通道\",\"manufacturer\":\"AP-AMS\",\"hw_version\":\""+sw_version+"\"}}";
+    String json = "{\"name\":\"" + name + "\""
+    + ",\"state_topic\":\"AMS/" + id + "/" + detail + "/swi\",\"command_topic\":\"AMS/" + id + "/" + detail + "\","
+    + "\"brightness_state_topic\":\"AMS/" + id + "/" + detail + "/bri\",\"brightness_command_topic\":\"AMS/" + id + "/" + detail + "\","
+    + "\"brightness_command_template\":\"{\\\"command\\\":\\\"" + detail + "bri\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
+    + "\"rgb_state_topic\":\"AMS/" + id + "/" + detail + "/rgb\",\"rgb_command_topic\":\"AMS/" + id + "/" + detail + "\","
+    + "\"rgb_command_template\":\"{\\\"command\\\":\\\"" + detail + "rgb\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
+    + "\"unique_id\":\"ams" + "light" + id + detail + "\","
+    + "\"payload_on\":\"{\\\"command\\\":\\\"" + detail + "swi\\\",\\\"value\\\":\\\"ON\\\"}\","
+    + "\"payload_off\":\"{\\\"command\\\":\\\"" + detail + "swi\\\",\\\"value\\\":\\\"OFF\\\"}\""
+    + ",\"device\":{\"identifiers\":\"APAMS" + id + "\",\"name\":\"AP-AMS-" + id + "通道\",\"manufacturer\":\"AP-AMS\",\"hw_version\":\"" + sw_version + "\"}}";
     array.add(topic);
     haClient.publish(topic.c_str(),json.c_str());
     return array;
