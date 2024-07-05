@@ -50,7 +50,9 @@ int backTime = 1000;
 unsigned int ledBrightness;//led默认亮度
 String filamentType;
 int filamentTemp;
-JsonArray filamentColorRGB;
+int ledR;
+int ledG;
+int ledB;
 #define ledPin 12//led引脚
 #define ledPixels 3//led数量
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
@@ -256,7 +258,7 @@ void connectBambuMQTT() {
             Serial.println("连接成功!");
             //Serial.println(bambu_topic_subscribe);
             bambuClient.subscribe(bambu_topic_subscribe.c_str());
-            ledAll(int(filamentColorRGB[0]),int(filamentColorRGB[1]),int(filamentColorRGB[2]));
+            ledAll(ledR,ledG,ledB);
         } else {
             Serial.print("连接失败，失败原因:");
             Serial.print(bambuClient.state());
@@ -363,7 +365,9 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                     Pdata["subStep"] = String("1");
                 }
             }
-        }else{ledAll(int(filamentColorRGB[0]),int(filamentColorRGB[1]),int(filamentColorRGB[2]));}
+        }else{
+            ledAll(ledR,ledG,ledB);
+            }
     }else if (Pdata["step"] == "2"){
         if (Pdata["subStep"] == "1"){
             statePublish("进入退料状态");
@@ -574,7 +578,7 @@ void connectHaMQTT() {
             Serial.println("连接成功!");
             //Serial.println(ha_topic_subscribe);
             haClient.subscribe(ha_topic_subscribe.c_str());
-            ledAll(int(filamentColorRGB[0]),int(filamentColorRGB[1]),int(filamentColorRGB[2]));
+            ledAll(ledR,ledG,ledB);
         } else {
             Serial.print("连接失败，失败原因:");
             Serial.print(haClient.state());
@@ -662,10 +666,10 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
         if (String(data["command"]).indexOf("swi") != -1){
             if (data["value"] == "ON"){
                 leds.setBrightness(ledBrightness);
-                haClient.publish(("AMS/"+filamentID+"/filaLig/swi").c_str(),"{\"command\":\"swtest\",\"value\":\"ON\"}");
+                haClient.publish(("AMS/"+filamentID+"/filaLig/swi").c_str(),"{\"command\":\"filaLigswi\",\"value\":\"ON\"}");
             }else if (data["value"] == "OFF"){
                 leds.setBrightness(0);
-                haClient.publish(("AMS/"+filamentID+"/filaLig/swi").c_str(),"{\"command\":\"swtest\",\"value\":\"OFF\"}");
+                haClient.publish(("AMS/"+filamentID+"/filaLig/swi").c_str(),"{\"command\":\"filaLigswi\",\"value\":\"OFF\"}");
             }
         }else if (String(data["command"]).indexOf("bri") != -1){
             ledBrightness = data["value"].as<String>().toInt();
@@ -676,15 +680,17 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
             int comma1 = input.indexOf(',');
             int comma2 = input.indexOf(',', comma1 + 1);
 
-            unsigned int r = input.substring(0, comma1).toInt();
-            unsigned int g = input.substring(comma1 + 1, comma2).toInt();
-            unsigned int b = input.substring(comma2 + 1).toInt();
+            int r = input.substring(0, comma1).toInt();
+            int g = input.substring(comma1 + 1, comma2).toInt();
+            int b = input.substring(comma2 + 1).toInt();
 
-            filamentColorRGB[0] = r;
-            filamentColorRGB[1] = g;
-            filamentColorRGB[2] = b;
+            ledR = r;
+            ledG = g;
+            ledB = b;
 
-            CData["filamentColorRGB"] = filamentColorRGB;
+            CData["ledR"] = ledR;
+            CData["ledG"] = ledG;
+            CData["ledB"] = ledB;
         }
     }else if (data["command"] == "filamentTemp"){
         filamentTemp = data["value"].as<int>();
@@ -712,8 +718,7 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     haClient.publish(("AMS/"+filamentID+"/mcState").c_str(),mc.getState().c_str());
     haClient.publish(("AMS/"+filamentID+"/svState").c_str(),sv.getState().c_str());
     haClient.publish(("AMS/"+filamentID+"/filaLig/bri").c_str(),String(ledBrightness).c_str());
-    String test = String(filamentColorRGB[0].as<int>())+","+String(filamentColorRGB[1].as<int>())+","+String(filamentColorRGB[2].as<int>());
-    haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),test.c_str());
+    haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),((String(ledR)+","+String(ledG)+","+String(ledB))).c_str());
     haClient.publish(("AMS/"+filamentID+"/filamentTemp").c_str(),String(filamentTemp).c_str());
     haClient.publish(("AMS/"+filamentID+"/filamentType").c_str(),String(filamentType).c_str());
 }
@@ -783,10 +788,10 @@ JsonArray initSelect(String name,String id,String detail,String options,JsonArra
 JsonArray initLight(String name,String id,String detail,JsonArray array){
     String topic = "homeassistant/light/ams"+id+detail+"/config";
     String json = "{\"name\":\"" + name + "\""
-    + ",\"state_topic\":\"AMS/" + id + "/" + detail + "/swi\",\"command_topic\":\"AMS/" + id + "/" + detail + "/swi\","
-    + "\"brightness_state_topic\":\"AMS/" + id + "/" + detail + "/bri\",\"brightness_command_topic\":\"AMS/" + id + "/" + detail + "\","
+    + ",\"state_topic\":\"AMS/" + id + "/" + detail + "/swi\",\"command_topic\":\"AMS/" + id + "\","
+    + "\"brightness_state_topic\":\"AMS/" + id + "/" + detail + "/bri\",\"brightness_command_topic\":\"AMS/" + id + "\","
     + "\"brightness_command_template\":\"{\\\"command\\\":\\\"" + detail + "bri\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
-    + "\"rgb_state_topic\":\"AMS/" + id + "/" + detail + "/rgb\",\"rgb_command_topic\":\"AMS/" + id + "/" + detail + "\","
+    + "\"rgb_state_topic\":\"AMS/" + id + "/" + detail + "/rgb\",\"rgb_command_topic\":\"AMS/" + id + "\","
     + "\"rgb_command_template\":\"{\\\"command\\\":\\\"" + detail + "rgb\\\",\\\"value\\\":\\\"{{ value }}\\\"}\","
     + "\"unique_id\":\"ams" + "light" + id + detail + "\","
     + "\"payload_on\":\"{\\\"command\\\":\\\"" + detail + "swi\\\",\\\"value\\\":\\\"ON\\\"}\","
@@ -804,9 +809,6 @@ void setup() {
     delay(1);
     leds.clear();
     leds.show();
-    filamentColorRGB.add(0);
-    filamentColorRGB.add(0);
-    filamentColorRGB.add(255);
 
     if (!LittleFS.exists("/config.json")) {
         ledAll(255,0,0);
@@ -949,7 +951,12 @@ void setup() {
         Cdata["backTime"] = backTime;
         Cdata["filamentTemp"]  = filamentTemp;
         Cdata["filamentType"] = filamentType;
-        Cdata["filamentColorRGB"] = filamentColorRGB;
+        ledR = 0;
+        ledG = 0;
+        ledB = 255;
+        Cdata["ledR"] = ledR;
+        Cdata["ledG"] = ledG;
+        Cdata["ledB"] = ledB;
         ledBrightness = 100;
         writeCData(Cdata);
     }else{
@@ -968,7 +975,9 @@ void setup() {
         backTime = Cdata["backTime"].as<int>();
         filamentTemp = Cdata["filamentTemp"].as<int>();
         filamentType = Cdata["filamentType"].as<String>();
-        filamentColorRGB = Cdata["filamentColorRGB"].as<JsonArray>();
+        ledR = Cdata["ledR"];
+        ledG = Cdata["ledG"];
+        ledB = Cdata["ledB"];
         ledAll(0,255,0);
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
@@ -1045,8 +1054,7 @@ void setup() {
 
     haClient.publish(("AMS/"+filamentID+"/filaLig/swi").c_str(),"{\"command\":\"filaLigswi\",\"value\":\"ON\"}");
     haClient.publish(("AMS/"+filamentID+"/filaLig/bri").c_str(),String(ledBrightness).c_str());
-    haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),
-    (String(filamentColorRGB[0].as<int>())+","+String(filamentColorRGB[1].as<int>())+","+String(filamentColorRGB[2].as<int>())).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),((String(ledR)+","+String(ledG)+","+String(ledB))).c_str());
     Serial.println("-=-=-=setup执行完成!=-=-=-");
 }
 
@@ -1189,5 +1197,4 @@ void loop() {
             }
         }
     }
-    
 }
