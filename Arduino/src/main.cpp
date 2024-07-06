@@ -24,7 +24,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.2";
+String sw_version = "v2.3";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String ha_mqtt_id = "ams";
@@ -562,6 +562,11 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
             ledAll(0,255,0);
+            delay(500);
+            statePublish("发送新的温度!");
+            bambuClient.publish(bambu_topic_publish.c_str(),
+            ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}")
+            .c_str());
         }
     }
     
@@ -747,6 +752,9 @@ void haTimerCallback() {
     haClient.publish(("AMS/"+filamentID+"/mcState").c_str(),mc.getState().c_str());
     haClient.publish(("AMS/"+filamentID+"/svState").c_str(),sv.getState().c_str());
     haClient.publish(("AMS/"+filamentID+"/backTime").c_str(),String(backTime).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filaLig/rgb").c_str(),((String(ledR)+","+String(ledG)+","+String(ledB))).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filamentTemp").c_str(),String(filamentTemp).c_str());
+    haClient.publish(("AMS/"+filamentID+"/filamentType").c_str(),String(filamentType).c_str());
 
     haLastTime = millis();
 }
