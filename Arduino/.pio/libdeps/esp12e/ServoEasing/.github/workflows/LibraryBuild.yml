@@ -1,0 +1,189 @@
+# LibraryBuild.yml
+# Github workflow script to test compile all examples of an Arduino library repository.
+#
+# Copyright (C) 2020  Armin Joachimsmeyer
+# https://github.com/ArminJo/Github-Actions
+#
+
+# This is the name of the workflow, visible on GitHub UI.
+name: LibraryBuild
+on:
+  workflow_dispatch: # To run it manually
+    description: 'manual build check'
+  push: # see: https://help.github.com/en/actions/reference/events-that-trigger-workflows#pull-request-event-pull_request
+    paths:
+    - '**.ino'
+    - '**.cpp'
+    - '**.hpp'
+    - '**.h'
+    - '**LibraryBuild.yml'
+  pull_request:
+    paths:
+    - '**.ino'
+    - '**.cpp'
+    - '**.hpp'
+    - '**.h'
+    - '**LibraryBuild.yml'
+
+jobs:
+  build:
+    name: ${{ matrix.arduino-boards-fqbn }} - test compiling examples
+
+    runs-on: ubuntu-latest # I picked Ubuntu to use shell scripts. As of 15.9.22 it is ubuntu-20.04.
+
+    #env:
+      # Comma separated list without double quotes around the list.
+      #REQUIRED_LIBRARIES: Servo
+
+    strategy:
+      matrix:
+        # The matrix will produce one job for each configuration parameter of type `arduino-boards-fqbn`
+        # In the Arduino IDE, the fqbn is printed in the first line of the verbose output for compilation as parameter -fqbn=... for the "arduino-builder -dump-prefs" command
+        #
+        # Examples: arduino:avr:uno, arduino:avr:leonardo, arduino:avr:nano, arduino:avr:mega
+        # arduino:sam:arduino_due_x, arduino:samd:arduino_zero_native"
+        # ATTinyCore:avr:attinyx5:chip=85,clock=1internal, digistump:avr:digispark-tiny, digistump:avr:digispark-pro
+        # STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8
+        # esp8266:esp8266:huzzah:eesz=4M3M,xtal=80, esp32:esp32:featheresp32:FlashFreq=80
+        # You may add a suffix behind the fqbn with "|" to specify one board for e.g. different compile options like arduino:avr:uno|trace
+        #############################################################################################################
+        arduino-boards-fqbn:
+          - arduino:avr:uno
+          - arduino:avr:leonardo
+          - arduino:avr:mega
+          - arduino:megaavr:nona4809:mode=off
+          - MegaCoreX:megaavr:4808:pinout=32pin_standard,clock=internal_16MHz
+          - megaTinyCore:megaavr:atxy7:chip=3217,clock=16internal
+          - arduino:sam:arduino_due_x
+          - arduino:samd:arduino_zero_native
+#          - adafruit:samd:adafruit_metro_m4:cache=on,speed=120,opt=small,maxqspi=50,usbstack=arduino,debug=off
+          - arduino:mbed:nano33ble
+          - arduino:mbed_rp2040:pico
+          - rp2040:rp2040:arduino_nano_connect
+          - esp8266:esp8266:huzzah:eesz=4M3M,xtal=80
+          - esp32:esp32:featheresp32:FlashFreq=80
+          - STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8
+          - stm32duino:STM32F1:genericSTM32F103C
+          - SparkFun:apollo3:sfe_artemis_nano
+
+        # Specify parameters for each board.
+        # With sketches-exclude you may exclude specific examples for a board. Use a comma separated list.
+        #############################################################################################################
+        include:
+          - arduino-boards-fqbn: arduino:avr:uno
+            required-libraries: NeoPatterns,PlayRtttl,Servo # for QuadrupedControl: -DQUADRUPED_1_WITH_DVD_REMOTE
+            build-properties: # the flags were put in compiler.cpp.extra_flags
+              OneServo: -DUSE_PCA9685_SERVO_EXPANDER -DDISABLE_PAUSE_RESUME
+              SymmetricEasing: -DDISABLE_COMPLEX_FUNCTIONS -DDEBUG
+              AsymmetricEasing: -DTRACE
+              Simple: -DPRINT_FOR_SERIAL_PLOTTER
+              PCA9685_ExpanderFor32Servos: -DTRACE -DDISABLE_MICROS_AS_DEGREE_PARAMETER
+              PCA9685_ExpanderAndServo: -DUSE_SOFT_I2C_MASTER
+              QuadrupedControl: -DQUADRUPED_1_WITH_DVD_REMOTE -mrelax
+
+          - arduino-boards-fqbn: arduino:avr:leonardo
+            required-libraries: Servo
+            sketches-exclude: TwoServos,RobotArmControl # No LightweightServoLib and TinyReceiver available
+
+          - arduino-boards-fqbn: arduino:avr:mega
+            required-libraries: Servo
+            sketches-exclude: TwoServos # No LightweightServoLib available
+
+          - arduino-boards-fqbn: arduino:megaavr:nona4809:mode=off
+            required-libraries: Servo
+            sketches-exclude: TwoServos,SpeedTest,EndPositionsTest,QuadrupedControl,RobotArmControl # No getVCCVoltageMillivolt(), no EasyButton
+
+            # Here we have a platform bundled Servo library
+          - arduino-boards-fqbn: MegaCoreX:megaavr:4808:pinout=32pin_standard,clock=internal_16MHz
+            platform-url: https://mcudude.github.io/MegaCoreX/package_MCUdude_MegaCoreX_index.json
+            sketches-exclude: TwoServos,SpeedTest,EndPositionsTest,QuadrupedControl,RobotArmControl # No getVCCVoltageMillivolt(), no EasyButton
+
+          - arduino-boards-fqbn: megaTinyCore:megaavr:atxy7:chip=3217,clock=16internal
+            platform-url: http://drazzy.com/package_drazzy.com_index.json
+            required-libraries: Servo
+            sketches-exclude: TwoServos,SpeedTest,EndPositionsTest,QuadrupedControl,RobotArmControl # No getVCCVoltageMillivolt(), no EasyButton
+
+          - arduino-boards-fqbn: arduino:sam:arduino_due_x
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl # QuadrupedControl RobotArmControl because of missing EEprom
+
+          - arduino-boards-fqbn: arduino:samd:arduino_zero_native
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl
+
+# Error in default samd/Servo.cpp:44:60 - volatile struct TC_STATUS_Type::<unnamed> has no member named SYNCBUSY
+# because Arduino uses the newer arduino and not the adafruit servo library
+#          - arduino-boards-fqbn: adafruit:samd:adafruit_metro_m4:cache=on,speed=120,opt=small,maxqspi=50,usbstack=arduino,debug=off
+#            platform-url: https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
+#            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl
+
+          - arduino-boards-fqbn: arduino:mbed:nano33ble
+            arduino-platform: arduino:mbed@1.3.2 # the 2.0.0 is incompatible with Servo library
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl,PCA9685_ExpanderFor32Servos,PCA9685_Expander,PCA9685_ExpanderAndServo  # No Wire
+
+          - arduino-boards-fqbn: arduino:mbed_rp2040:pico
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl # Comma separated list of example names to exclude in build
+
+          - arduino-boards-fqbn: rp2040:rp2040:arduino_nano_connect
+            platform-url: https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl # Comma separated list of example names to exclude in build
+
+          - arduino-boards-fqbn: esp8266:esp8266:huzzah:eesz=4M3M,xtal=80
+            platform-url: https://arduino.esp8266.com/stable/package_esp8266com_index.json
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl,SpeedTest # SpeedTest because of only one analog input
+
+          - arduino-boards-fqbn: esp32:esp32:featheresp32:FlashFreq=80
+            platform-url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+            required-libraries: ESP32Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl # Comma separated list of example names to exclude in build
+
+          - arduino-boards-fqbn: STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 # STM version
+            platform-url: https://raw.githubusercontent.com/stm32duino/BoardManagerFiles/main/package_stmicroelectronics_index.json
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl
+
+          - arduino-boards-fqbn: stm32duino:STM32F1:genericSTM32F103C # Roger Clark version
+            platform-url: http://dan.drown.org/stm32duino/package_STM32duino_index.json
+            required-libraries: Servo
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl
+
+          - arduino-boards-fqbn: SparkFun:apollo3:sfe_artemis_nano
+            platform-url: https://raw.githubusercontent.com/sparkfun/Arduino_Apollo3/master/package_sparkfun_apollo3_index.json
+            required-libraries: Servo
+             # 4/2020 For PCA9685_Expander, Wire cannot be found in cli, it works in the regular IDE.
+            sketches-exclude: TwoServos,QuadrupedControl,RobotArmControl,PCA9685_Expander,PCA9685_ExpanderAndServo,PCA9685_ExpanderFor32Servos
+
+#      fail-fast: false # false -> do not cancel all jobs / architectures if one job fails
+
+    # This is the list of steps this job will run.
+    steps:
+
+      # First of all, we clone the repo using the `checkout` action.
+      - name: Checkout
+        uses: actions/checkout@master
+
+      - name: Arduino Lint
+        uses: arduino/arduino-lint-action@v1
+        with:
+          library-manager: update
+
+      # See: https://github.com/codespell-project/actions-codespell/blob/master/README.md
+      - name: Spell check
+        uses: codespell-project/actions-codespell@master
+        with:
+          only_warn: 1
+
+      - name: Compile all examples using the arduino-test-compile action
+        uses: ArminJo/arduino-test-compile@master
+        with:
+          arduino-board-fqbn: ${{ matrix.arduino-boards-fqbn }}
+          arduino-platform: ${{ matrix.arduino-platform }}
+          platform-url: ${{ matrix.platform-url }}
+          required-libraries: ${{ matrix.required-libraries }}
+#          required-libraries: ${{ env.REQUIRED_LIBRARIES }},${{ matrix.required-libraries }}
+          sketches-exclude: ${{ matrix.sketches-exclude }}
+          build-properties: ${{ toJson(matrix.build-properties) }}
