@@ -16,12 +16,26 @@ bool DataPacket::headCheck(){
 }
 
 bool DataPacket::totalCheck(){
-    byte packet[length - 3] = {0x3D,sequenceNumber,address,length,headCRC,commandType};
-    memcpy(packet + 6,content,contentlength);
+    byte packet[] = {0x3D,sequenceNumber,address,length,headCRC,commandType,content};
     crc16.restart();
     crc16.add(packet, sizeof(packet)); // 计算前 12 个字节的 CRC16 校验
     uint16_t totalCRC = crc16.calc();
     uint8_t lowCRC = totalCRC & 0xFF; // 低字节
     uint8_t highCRC = (totalCRC >> 8) & 0xFF; // 高字节
     return (lowCRC == totalLowCRC and highCRC == totalHighCRC);
+}
+
+void DataPacket::sendPacket(){
+    byte head[] = {0x3D,sequenceNumber,address,length};
+    crc8.restart();
+    crc8.add(head,4);
+    headCRC = crc8.calc();
+    byte packet[] = {0x3D,sequenceNumber,address,length,headCRC,commandType,content};
+    crc16.restart();
+    crc16.add(packet, sizeof(packet)); // 计算前 12 个字节的 CRC16 校验
+    uint16_t totalCRC = crc16.calc();
+    totalLowCRC = totalCRC & 0xFF; // 低字节
+    totalHighCRC = (totalCRC >> 8) & 0xFF; // 高字节
+    byte finalPacket[] = {0x3D,sequenceNumber,address,length,headCRC,commandType,content,totalLowCRC,totalHighCRC};
+    Serial.write(finalPacket, sizeof(finalPacket));
 }

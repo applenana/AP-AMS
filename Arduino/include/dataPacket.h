@@ -1,4 +1,6 @@
 #include "CRC.h"
+#include "Motor.h"
+#include "ServoMotor.h"
 #pragma once
 
 class DataPacket {
@@ -11,7 +13,7 @@ public:
     uint8_t address;           // 地址
     uint8_t length;            // 长度
     uint8_t commandType;       // 命令号
-    byte content[512] = {};    // 内容
+    uint8_t content;           // 内容(一字节)
     uint8_t headCRC;           // 头检验
     uint8_t totalLowCRC;       // 总低检验
     uint8_t totalHighCRC;      // 总高检验
@@ -20,4 +22,5 @@ public:
     DataPacket();  // 构造函数声明
     bool headCheck();
     bool totalCheck();
+    void sendPacket(); 
 };
