@@ -1,9 +1,6 @@
-#include <Adafruit_NeoPixel.h>
 #pragma once
+#include <Adafruit_NeoPixel.h>
 
-class Led{
-public:
-    Led(int ledPixels,int ledPin);
-    Adafruit_NeoPixel leds;
-    void All(unsigned int r, unsigned int g, unsigned int b);
-};
+extern Adafruit_NeoPixel leds;
+void ledAll(unsigned int r,unsigned int g,unsigned int b);
+void ledPC(uint pixels,uint r,uint g,uint b);

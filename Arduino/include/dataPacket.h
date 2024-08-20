@@ -1,6 +1,7 @@
 #include "CRC.h"
 #include "Motor.h"
 #include "ServoMotor.h"
+#include "led.h"
 #pragma once
 
 class DataPacket {
@@ -9,11 +10,11 @@ private:
     CRC16 crc16;
 public:
     uint8_t index;             // 索引
-    uint8_t sequenceNumber;    // 序号
-    uint8_t address;           // 地址
+    int8_t sequenceNumber;     // 序号
+    int8_t address;            // 地址
     uint8_t length;            // 长度
     uint8_t commandType;       // 命令号
-    uint8_t content;           // 内容(一字节)
+    byte content[512];         // 内容(至多512字节)
     uint8_t headCRC;           // 头检验
     uint8_t totalLowCRC;       // 总低检验
     uint8_t totalHighCRC;      // 总高检验
@@ -22,5 +23,5 @@ public:
     DataPacket();  // 构造函数声明
     bool headCheck();
     bool totalCheck();
-    void sendPacket(); 
+    void sendPacket(bool ISIO2OUT = false); 
 };
