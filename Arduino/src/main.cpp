@@ -24,7 +24,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.3";
+String sw_version = "v2.4";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String ha_mqtt_id = "ams";
@@ -61,6 +61,10 @@ int ledB;
 bool unloadMsg;
 bool completeMSG;
 bool reSendUnload;
+bool isSendFilament;
+int sendOutTimeOut;
+int sendOutTimes;
+int pullBackTimeOut;
 String commandStr = "";//命令传输
 //-=-=-=-=-=-=end
 
@@ -138,6 +142,7 @@ JsonDocument getPData(){
     File file = LittleFS.open("/data.json", "r");
     JsonDocument Pdata;
     deserializeJson(Pdata, file);
+    file.close();
     return Pdata;
 }
 //写入持久数据
@@ -158,6 +163,7 @@ JsonDocument getCData(){
     File file = LittleFS.open("/config.json", "r");
     JsonDocument Cdata;
     deserializeJson(Cdata, file);
+    file.close();
     return Cdata;
 }
 //写入配置数据
@@ -324,19 +330,19 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     subStep代表子步骤，用于细分主步骤
     */
     JsonDocument Pdata = getPData();
-    if (Pdata["step"] == "1"){
-        if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
+    if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
+        String nextFilament = String(mcPercent.toInt() - 110 + 1);
+        Pdata["nextFilament"] = nextFilament;            
+        if (Pdata["step"] == "1"){
             statePublish("收到换色指令，进入换色准备状态");
             leds.setPixelColor(2,leds.Color(255,0,0));
             leds.setPixelColor(1,leds.Color(0,255,0));
             leds.setPixelColor(0,leds.Color(0,0,255));
             leds.show();
-            
-            String nextFilament = String(mcPercent.toInt() - 110 + 1);
-            Pdata["nextFilament"] = nextFilament;
             unloadMsg = false;
             completeMSG = false;
             reSendUnload = false;
+            isSendFilament = false;
             sv.pull();
             mc.stop();
             statePublish("本机通道"+String(Pdata["filamentID"])+"|上料通道"+String(Pdata["lastFilament"])+"|下一耗材通道"+nextFilament);
@@ -368,7 +374,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
         }else{
             ledAll(ledR,ledG,ledB);
             }
-    }else if (Pdata["step"] == "2"){
+    }if (Pdata["step"] == "2"){
         if (Pdata["subStep"] == "1"){
             statePublish("进入退料状态");
             leds.clear();
@@ -389,25 +395,39 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                 statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
+                pullBackTimeOut = millis();
                 Pdata["subStep"] = "3";
             } else if (printError == "318734339") {
                 statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
+                pullBackTimeOut = millis();
                 bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
                 Pdata["subStep"] = "3";
             }
-        }else if (Pdata["subStep"] == "3" && amsStatus == "0"){
-            statePublish("退料完成，本次换色完成");
-            leds.setPixelColor(2,leds.Color(255,255,255));
-            leds.show();
-            delay(backTime);
-            sv.pull();
-            mc.stop();
-            Pdata["step"] = "4";
-            Pdata["subStep"] = "1";
+        }else if (Pdata["subStep"] == "3"){
+            if (amsStatus == "0"){
+                statePublish("退料完成，本次换色完成");
+                leds.setPixelColor(2,leds.Color(255,255,255));
+                leds.show();
+                delay(backTime);
+                sv.pull();
+                mc.stop();
+                Pdata["step"] = "4";
+                Pdata["subStep"] = "1";
+            }else{
+                if ((millis() - pullBackTimeOut)>30*1000){
+                    sv.pull();
+                    mc.stop();
+                    statePublish("退料超时，请手动拔出耗材并检查机器状态！");
+                }else{
+                    sv.push();
+                    mc.backforward();
+                }
+            }
         }
     }else if (Pdata["step"] == "3"){
+        isSendFilament = true;
         if (Pdata["subStep"] == "1"){
             if (amsStatus == "0") {
                 statePublish("进入送料状态");
@@ -439,19 +459,40 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             sv.push();
             mc.forward();
             Pdata["subStep"] = "3";
+            sendOutTimeOut = millis();
+            sendOutTimes = 1;
 
             leds.clear();
             leds.setPixelColor(2,leds.Color(255,255,0));
             leds.setPixelColor(1,leds.Color(255,255,0));
             leds.show();
-        }else if ((Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
-            statePublish("停止送料");
-            mc.stop();
-            bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
-            Pdata["subStep"] = "4";
+        }else if (Pdata["subStep"] == "3"){
+            if ((amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
+                statePublish("停止送料");
+                mc.stop();
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
+                Pdata["subStep"] = "4";
 
-            leds.setPixelColor(0,leds.Color(255,255,0));
-            leds.show();
+                leds.setPixelColor(0,leds.Color(255,255,0));
+                leds.show();
+            }else{
+                if (sendOutTimes <=3){
+                    if ((millis() - sendOutTimeOut)>30*1000){
+                        statePublish("送料超时!尝试重新送料中");
+                        sendOutTimeOut = millis();
+                        sv.push();
+                        mc.backforward();
+                        delay(3*1000);
+                        sv.push();
+                        mc.forward();
+                    }else{
+                        sv.push();
+                        mc.forward();
+                    }
+                }else{
+                    statePublish("送料错误！请手动送料并检查挤出机状态!");
+                }
+            }
         }else if (Pdata["subStep"] == "4"){
             if (hwSwitchState == "0") {
                 statePublish("检测到送料失败，重新送料!");
@@ -537,9 +578,18 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             Pdata["subStep"] = "1";
             Pdata["lastFilament"] = nextFilament;
             ledAll(0,255,0);
+            if(isSendFilament){
+                delay(500);
+                statePublish("发送新的温度!");
+                statePublish("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}");
+                bambuClient.publish(bambu_topic_publish.c_str(),
+                ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}")
+                .c_str());
+            }
         }
     }else if (Pdata["step"] == "5"){
         bambuClient.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
+        delay(500);
         if (!completeMSG){
             statePublish("发送继续指令");
             completeMSG = true;
@@ -562,11 +612,6 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
             ledAll(0,255,0);
-            delay(500);
-            statePublish("发送新的温度!");
-            bambuClient.publish(bambu_topic_publish.c_str(),
-            ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}")
-            .c_str());
         }
     }
     
@@ -703,8 +748,10 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     }else if (data["command"] == "filamentType"){
         filamentType = data["value"].as<String>();
         CData["filamentType"] = filamentType;
+    }else if (data["command"] == "backTime"){
+        backTime = (data["value"].as<String>()).toInt();
+        CData["backTime"] = backTime;
     }
-    
     
     writePData(PData);
     writeCData(CData);
