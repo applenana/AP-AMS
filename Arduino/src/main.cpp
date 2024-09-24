@@ -1106,6 +1106,7 @@ void setup() {
 
     File file = LittleFS.open("/ha.json", "w");
     serializeJson(haData, file);
+    file.close();
     Serial.println("初始化ha成功!");
     Serial.println("");
     serializeJsonPretty(haData,Serial);
@@ -1248,6 +1249,7 @@ void loop() {
             File file = LittleFS.open("/ha.json", "r");
             JsonDocument haData;
             deserializeJson(haData, file);
+            file.close();
             JsonArray list = haData["discovery_topic"].as<JsonArray>();
             for (JsonVariant value : list) {
                 String topic = value.as<String>();
