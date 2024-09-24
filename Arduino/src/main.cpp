@@ -518,7 +518,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                 leds.show();
             }
         }else if (Pdata["subStep"] == "5"){
-            if (printError == "318734343") {
+            if (printError == "318734343" or printError == "134184967") {
                 if (hwSwitchState == "1"){
                     statePublish("被虚晃一枪！重新点击确认");
                     bambuClient.publish(bambu_topic_publish.c_str(), bambu_done.c_str());
