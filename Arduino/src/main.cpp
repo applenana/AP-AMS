@@ -24,7 +24,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.4";
+String sw_version = "v2.5-beta";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String ha_mqtt_id = "ams";
@@ -62,9 +62,10 @@ bool unloadMsg;
 bool completeMSG;
 bool reSendUnload;
 bool isSendFilament;
-int sendOutTimeOut;
+long sendOutTimeOut;
 int sendOutTimes;
-int pullBackTimeOut;
+long pullBackTimeOut;
+int pullBackTimes;
 String commandStr = "";//命令传输
 //-=-=-=-=-=-=end
 
@@ -391,17 +392,19 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                 delay(3000);
                 statePublish("仍未退料,发出退料请求");
                 bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
-            }else if (printError == "318750723") {
+            }else if (printError == "318750723" or printError == "134184963") {
                 statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
                 pullBackTimeOut = millis();
+                pullBackTimes = 1;
                 Pdata["subStep"] = "3";
-            } else if (printError == "318734339") {
+            } else if (printError == "318734339" or printError == "134201347") {
                 statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
                 pullBackTimeOut = millis();
+                pullBackTimes = 1;
                 bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
                 Pdata["subStep"] = "3";
             }
@@ -454,7 +457,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                     inLed--;
                 }
             }
-        }else if (Pdata["subStep"] == "2" && printError == "318750726"){
+        }else if (Pdata["subStep"] == "2" && (printError == "318750726" or printError == "134201350")){
             statePublish("送入耗材");
             sv.push();
             mc.forward();
@@ -480,6 +483,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                     if ((millis() - sendOutTimeOut)>30*1000){
                         statePublish("送料超时!尝试重新送料中");
                         sendOutTimeOut = millis();
+                        sendOutTimes += 1;
                         sv.push();
                         mc.backforward();
                         delay(3*1000);
