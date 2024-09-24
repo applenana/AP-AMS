@@ -581,9 +581,9 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             if(isSendFilament){
                 delay(500);
                 statePublish("发送新的温度!");
-                statePublish("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}");
+                statePublish("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}");
                 bambuClient.publish(bambu_topic_publish.c_str(),
-                ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\"},\"user_id\": \"1\"}")
+                ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}")
                 .c_str());
             }
         }
