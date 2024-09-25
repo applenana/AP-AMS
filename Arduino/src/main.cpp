@@ -24,7 +24,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.5-beta";
+String sw_version = "v2.5";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String ha_mqtt_id = "ams";
@@ -67,6 +67,9 @@ int sendOutTimes;
 long pullBackTimeOut;
 int pullBackTimes;
 String commandStr = "";//命令传输
+int lastFilament;
+int nextFilament;
+bool isFirstTime;//是否第一次换色
 //-=-=-=-=-=-=end
 
 unsigned long lastMsg = 0;
@@ -149,7 +152,7 @@ JsonDocument getPData(){
 //写入持久数据
 void writePData(JsonDocument Pdata){
     // 检查Pdata是否包含所需的参数
-    if (Pdata.containsKey("lastFilament") && Pdata.containsKey("step") && Pdata.containsKey("subStep") && Pdata.containsKey("filamentID")) {
+    if (Pdata.containsKey("step") && Pdata.containsKey("subStep") && Pdata.containsKey("filamentID")) {
         File file = LittleFS.open("/data.json", "w");
         serializeJson(Pdata, file);
         file.close();
@@ -307,6 +310,7 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     String gcodeState = (*data)["print"]["gcode_state"].as<String>();
     String mcPercent = (*data)["print"]["mc_percent"].as<String>();
     String mcRemainingTime = (*data)["print"]["mc_remaining_time"].as<String>();
+    String layerNum = (*data)["print"]["layer_num"].as<String>();
     // 手动释放内存
     delete data;
 
@@ -332,8 +336,8 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     */
     JsonDocument Pdata = getPData();
     if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
-        String nextFilament = String(mcPercent.toInt() - 110 + 1);
-        Pdata["nextFilament"] = nextFilament;            
+        nextFilament = mcPercent.toInt() - 110 + 1;
+        lastFilament = layerNum.toInt() -10 + 1; 
         if (Pdata["step"] == "1"){
             statePublish("收到换色指令，进入换色准备状态");
             leds.setPixelColor(2,leds.Color(255,0,0));
@@ -346,27 +350,39 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             isSendFilament = false;
             sv.pull();
             mc.stop();
-            statePublish("本机通道"+String(Pdata["filamentID"])+"|上料通道"+String(Pdata["lastFilament"])+"|下一耗材通道"+nextFilament);
+            statePublish("本机通道"+String(Pdata["filamentID"])+"|上料通道"+String(lastFilament)+"|下一耗材通道"+String(nextFilament));
 
-            if (Pdata["filamentID"] == Pdata["lastFilament"]){
+            if (Pdata["filamentID"].as<int>() == lastFilament){
                 statePublish("本机通道["+String(Pdata["filamentID"])+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
-                if (nextFilament == Pdata["filamentID"]){
+                if (nextFilament == Pdata["filamentID"].as<int>()){
                     statePublish("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
+                    isFirstTime = false;
                     Pdata["step"] = "5";
                     Pdata["subStep"] = "1";
                 }else{
-                    //bambuClient.publish(bambu_topic_publish.c_str(),bambu_pause.c_str());
                     statePublish("下一耗材通道与本机通道不同，需要换料，准备退料");
                     Pdata["step"] = "2";
                     Pdata["subStep"] = "1";
                 }
             }else{
                 statePublish("本机通道["+String(Pdata["filamentID"])+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
-                if (nextFilament == Pdata["filamentID"]){
-                    statePublish("本机通道将要换色，准备送料");
+                if (nextFilament == Pdata["filamentID"].as<int>()){
+                    if (lastFilament == -4){
+                        statePublish("首次换色！先退料再送料！");
+                        isFirstTime = true;
+                        bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+                    }else{
+                        statePublish("本机通道将要换色，准备送料");
+                        isFirstTime = false;
+                    }
+                    
                     Pdata["step"] = String("3");
                     Pdata["subStep"] = String("1");
                 }else{
+                    if (lastFilament == -4){
+                        isFirstTime = false;
+                        statePublish("首次换色……等待其它通道操作");
+                    }
                     statePublish("本机通道与本次换色无关，无需换色");
                     Pdata["step"] = String("4");
                     Pdata["subStep"] = String("1");
@@ -441,7 +457,8 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
                 Pdata["subStep"] = "2"; // 更新 subStep
             } else {
                 if (!unloadMsg){
-                    statePublish("等待耗材退料完成……");
+                    if (isFirstTime){statePublish("请手动拔出上料料线");}
+                    else{statePublish("等待耗材退料完成……");}
                     unloadMsg = true;
                 }else{
                     Serial.print(".");
@@ -576,11 +593,11 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
         }
 
         if (amsStatus == "1280" and gcodeState != "PAUSE") {
-            String nextFilament = Pdata["nextFilament"];
-            statePublish("换色完成！切换上料通道为["+nextFilament+"]");
+            statePublish("换色完成！切换上料通道为["+String(nextFilament)+"]");
             Pdata["step"] = "1";
             Pdata["subStep"] = "1";
-            Pdata["lastFilament"] = nextFilament;
+            isFirstTime = false;
+            lastFilament = nextFilament;
             ledAll(0,255,0);
             if(isSendFilament){
                 delay(500);
@@ -671,9 +688,7 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     JsonDocument PData = getPData();
     JsonDocument CData = getCData();
 
-    if (data["command"] == "onTun"){
-        PData["lastFilament"] = data["value"].as<String>();
-    }else if (data["command"] == "svAng"){
+    if (data["command"] == "svAng"){
         sv.writeAngle(data["value"].as<String>().toInt());
     }else if (data["command"] == "step"){
         PData["step"] = data["value"].as<String>();
@@ -760,8 +775,8 @@ void haCallback(char* topic, byte* payload, unsigned int length) {
     writePData(PData);
     writeCData(CData);
     haClient.publish(("AMS/"+filamentID+"/nowTun").c_str(),filamentID.c_str());
-    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),PData["nextFilament"].as<String>().c_str());
-    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),PData["lastFilament"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),String(nextFilament).c_str());
+    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),String(lastFilament).c_str());
     haClient.publish(("AMS/"+filamentID+"/svAng").c_str(),String(sv.getAngle()).c_str());
     haClient.publish(("AMS/"+filamentID+"/step").c_str(),PData["step"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),PData["subStep"].as<String>().c_str());
@@ -789,8 +804,8 @@ void haTimerCallback() {
     if (debug){Serial.println("ha定时任务执行！");}
     JsonDocument PData = getPData();
     haClient.publish(("AMS/"+filamentID+"/nowTun").c_str(),filamentID.c_str());
-    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),PData["nextFilament"].as<String>().c_str());
-    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),PData["lastFilament"].as<String>().c_str());
+    haClient.publish(("AMS/"+filamentID+"/nextTun").c_str(),String(nextFilament).c_str());
+    haClient.publish(("AMS/"+filamentID+"/onTun").c_str(),String(lastFilament).c_str());
     haClient.publish(("AMS/"+filamentID+"/svAng").c_str(),String(sv.getAngle()).c_str());
     haClient.publish(("AMS/"+filamentID+"/step").c_str(),PData["step"].as<String>().c_str());
     haClient.publish(("AMS/"+filamentID+"/subStep").c_str(),PData["subStep"].as<String>().c_str());
@@ -1062,7 +1077,6 @@ void setup() {
     
     if (!LittleFS.exists("/data.json")) {
         JsonDocument Pdata;
-        Pdata["lastFilament"] = "1";
         Pdata["step"] = "1";
         Pdata["subStep"] = "1";
         Pdata["filamentID"] = filamentID;
@@ -1071,7 +1085,6 @@ void setup() {
     } else {
         JsonDocument Pdata = getPData();
         Pdata["filamentID"] = filamentID;
-        //Pdata["lastFilament"] = "1";//每次都将上一次的耗材定义为1(不建议使用)
         writePData(Pdata);
         serializeJsonPretty(Pdata, Serial);
         Serial.println("成功读取配置文件!");
