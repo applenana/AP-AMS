@@ -9,6 +9,7 @@
 #include <Adafruit_NeoPixel.h>
 
 #define MSG_BUFFER_SIZE	(4096)//mqtt服务器的配置
+#define AGAIN 100//定义步骤特殊变量
 
 //-=-=-=-=-=-=-=-=↓用户配置↓-=-=-=-=-=-=-=-=-=-=
 String wifiName;//
@@ -16,11 +17,15 @@ String wifiKey;//
 String bambu_mqtt_broker;//
 String bambu_mqtt_password;//
 String bambu_device_serial;//
-String filamentID;//
+int filamentID;//
+String ha_mqtt_broker;
+String ha_mqtt_user;
+String ha_mqtt_password;
 //-=-=-=-=-=-=-=-=↑用户配置↑-=-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
+String sw_version = "v2.5";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String bambu_topic_subscribe;// = "device/" + String(bambu_device_serial) + "/report";
@@ -36,9 +41,14 @@ int motorPin1 = 4;//电机一号引脚
 int motorPin2 = 5;//电机二号引脚
 int bufferPin1 = 14;//缓冲器1
 int bufferPin2 = 16;//缓冲器2
-unsigned int renewTime = 1250;//定时任务刷新时间
+unsigned int bambuRenewTime = 1250;//拓竹更新时间
 int backTime = 1000;
 unsigned int ledBrightness;//led默认亮度
+String filamentType;
+int filamentTemp;
+int ledR;
+int ledG;
+int ledB;
 #define ledPin 12//led引脚
 #define ledPixels 3//led数量
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
@@ -46,16 +56,28 @@ unsigned int ledBrightness;//led默认亮度
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
 bool unloadMsg;
 bool completeMSG;
+bool reSendUnload;
+bool isSendFilament;
+long sendOutTimeOut;
+int sendOutTimes;
+long pullBackTimeOut;
+int pullBackTimes;
+int lastFilament;
+int nextFilament;
+bool isFirstTime;//是否第一次换色
+int step = 1;
+int subStep = 1;
 //-=-=-=-=-=-=end
 
 unsigned long lastMsg = 0;
 char msg[MSG_BUFFER_SIZE];
-WiFiClientSecure espClient;
-PubSubClient client(espClient);
+WiFiClientSecure bambuWifiClient;
+PubSubClient bambuClient(bambuWifiClient);
+
 Adafruit_NeoPixel leds(ledPixels, ledPin, NEO_GRB + NEO_KHZ800);
 
-unsigned long lastTime = millis();
-unsigned long checkTime = millis();//mqtt定时任务
+unsigned long bambuLastTime = millis();
+unsigned long bambuCheckTime = millis();//mqtt定时任务
 int inLed = 2;//跑马灯led变量
 int waitLed = 2;
 int completeLed = 2;
@@ -112,31 +134,12 @@ void connectWF(String wn,String wk) {
     ledAll(50,255,50);
 }
 
-//获取持久数据
-JsonDocument getPData(){
-    File file = LittleFS.open("/data.json", "r");
-    JsonDocument Pdata;
-    deserializeJson(Pdata, file);
-    return Pdata;
-}
-//写入持久数据
-void writePData(JsonDocument Pdata){
-    // 检查Pdata是否包含所需的参数
-    if (Pdata.containsKey("lastFilament") && Pdata.containsKey("step") && Pdata.containsKey("subStep") && Pdata.containsKey("filamentID")) {
-        File file = LittleFS.open("/data.json", "w");
-        serializeJson(Pdata, file);
-        file.close();
-    } else {
-        Serial.println("错误：数据缺少必要的参数，无法存储。");
-        ledAll(255,0,0);
-    }
-}
-
 //获取配置数据
 JsonDocument getCData(){
     File file = LittleFS.open("/config.json", "r");
     JsonDocument Cdata;
     deserializeJson(Cdata, file);
+    file.close();
     return Cdata;
 }
 //写入配置数据
@@ -152,6 +155,7 @@ class Machinery {
     int pin1;
     int pin2;
     bool isStop = true;
+    String state = "停止";
   public:
     Machinery(int pin1, int pin2) {
       this->pin1 = pin1;
@@ -164,56 +168,85 @@ class Machinery {
       digitalWrite(pin1, HIGH);
       digitalWrite(pin2, LOW);
       isStop = false;
+      state = "前进";
     }
 
     void backforward() {
       digitalWrite(pin1, LOW);
       digitalWrite(pin2, HIGH);
       isStop = false;
+      state = "后退";
     }
 
     void stop() {
       digitalWrite(pin1, HIGH);
       digitalWrite(pin2, HIGH);
       isStop = true;
+      state = "停止";
     }
 
     bool getStopState() {
         return isStop;
     }
+    String getState(){
+        return state;
+    }
 };
 class ServoControl {
-  public:
-    ServoControl(){
-    }
-    void push() {
-        servo.write(0);
-    }
-    void pull() {
-        servo.write(180);
-    }
-    void writeAngle(int angle) {
-        servo.write(angle);
-    }
-};
+    private:
+        int angle = -1;
+        String state = "自定义角度";
+    public:
+        ServoControl(){
+        }
+        void push() {
+            servo.write(0);
+            angle = 0;
+            state = "推";
+        }
+        void pull() {
+            servo.write(180);
+            angle = 180;
+            state = "拉";
+        }
+        void writeAngle(int angle) {
+            servo.write(angle);
+            angle = angle;
+            state = "自定义角度";
+        }
+        int getAngle(){
+            return angle;
+        }
+        String getState(){
+            return state;
+        }
+    };
 //定义电机舵机变量
 ServoControl sv;
 Machinery mc(motorPin1, motorPin2);
 
-//连接mqtt
-void connectMQTT() {
+void statePublish(String content){
+    Serial.println(content);
+    pinMode(2,SPECIAL);
+    Serial1.println("[通道"+String(filamentID)+"]"+content);
+    Serial1.flush();
+    pinMode(2,INPUT);
+}
+
+//连接拓竹mqtt
+void connectBambuMQTT() {
     int count = 1;
-    while (!client.connected()) {
+    while (!bambuClient.connected()) {
         count ++;
         Serial.println("尝试连接拓竹mqtt|"+bambu_mqtt_id+"|"+bambu_mqtt_user+"|"+bambu_mqtt_password);
-        if (client.connect(bambu_mqtt_id.c_str(), bambu_mqtt_user.c_str(), bambu_mqtt_password.c_str())) {
+        if (bambuClient.connect(bambu_mqtt_id.c_str(), bambu_mqtt_user.c_str(), bambu_mqtt_password.c_str())) {
             Serial.println("连接成功!");
-            Serial.println(bambu_topic_subscribe);
-            client.subscribe(bambu_topic_subscribe.c_str());
-            ledAll(0,0,255);
+            //Serial.println(bambu_topic_subscribe);
+            bambuClient.subscribe(bambu_topic_subscribe.c_str());
+            ledAll(ledR,ledG,ledB);
         } else {
             Serial.print("连接失败，失败原因:");
-            Serial.print(client.state());
+            Serial.print(bambuClient.state());
             Serial.println("在一秒后重新连接");
             delay(1000);
             ledAll(255,0,0);
@@ -241,8 +274,8 @@ void connectMQTT() {
     }
 }
 
-//mqtt回调
-void callback(char* topic, byte* payload, unsigned int length) {
+//拓竹mqtt回调
+void bambuCallback(char* topic, byte* payload, unsigned int length) {
     JsonDocument* data = new JsonDocument();
     deserializeJson(*data, payload, length);
     String sequenceId = (*data)["print"]["sequence_id"].as<String>();
@@ -252,17 +285,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
     String gcodeState = (*data)["print"]["gcode_state"].as<String>();
     String mcPercent = (*data)["print"]["mc_percent"].as<String>();
     String mcRemainingTime = (*data)["print"]["mc_remaining_time"].as<String>();
+    String layerNum = (*data)["print"]["layer_num"].as<String>();
     // 手动释放内存
     delete data;
 
     if (!(amsStatus == printError && printError == hwSwitchState && hwSwitchState == gcodeState && gcodeState == mcPercent && mcPercent == mcRemainingTime && mcRemainingTime == "null")) {
         if (debug){
-            Serial.println(sequenceId+"|ams["+amsStatus+"]"+"|err["+printError+"]"+"|hw["+hwSwitchState+"]"+"|gcode["+gcodeState+"]"+"|mcper["+mcPercent+"]"+"|mcrtime["+mcRemainingTime+"]");
-            Serial.print("Free memory: ");
-            Serial.print(ESP.getFreeHeap());
-            Serial.println(" bytes");
-            Serial.println("-=-=-=-=-");}
-        lastTime = millis();
+            statePublish(sequenceId+"|ams["+amsStatus+"]"+"|err["+printError+"]"+"|hw["+hwSwitchState+"]"+"|gcode["+gcodeState+"]"+"|mcper["+mcPercent+"]"+"|mcrtime["+mcRemainingTime+"]");
+            //Serial.print("Free memory: ");
+            //Serial.print(ESP.getFreeHeap());
+            //Serial.println(" bytes");
+            statePublish("Free memory: "+String(ESP.getFreeHeap())+" bytes");
+            statePublish("-=-=-=-=-");}
+        bambuLastTime = millis();
     }
     
     /*
@@ -274,91 +309,154 @@ void callback(char* topic, byte* payload, unsigned int length) {
     5——继续 绿色
     subStep代表子步骤，用于细分主步骤
     */
-    JsonDocument Pdata = getPData();
-    if (Pdata["step"] == "1"){
-        if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
-            Serial.println("收到换色指令，进入换色准备状态");
+
+    if (gcodeState == "FAILED"){
+        step = 1;
+        subStep = 1;
+    }
+    if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
+        nextFilament = mcPercent.toInt() - 110 + 1;
+        lastFilament = layerNum.toInt() -10 + 1; 
+        if (step == 1){
+            statePublish("收到换色指令，进入换色准备状态");
             leds.setPixelColor(2,leds.Color(255,0,0));
             leds.setPixelColor(1,leds.Color(0,255,0));
             leds.setPixelColor(0,leds.Color(0,0,255));
             leds.show();
-            String nextFilament = String(mcPercent.toInt() - 110 + 1);
-            Pdata["nextFilament"] = nextFilament;
             unloadMsg = false;
             completeMSG = false;
+            reSendUnload = false;
+            isSendFilament = false;
             sv.pull();
             mc.stop();
-            Serial.println("本机通道"+String(Pdata["filamentID"])+"|上料通道"+String(Pdata["lastFilament"])+"|下一耗材通道"+nextFilament);
-
-            if (Pdata["filamentID"] == Pdata["lastFilament"]){
-                Serial.println("本机通道["+String(Pdata["filamentID"])+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
-                if (nextFilament == Pdata["filamentID"]){
-                    Serial.println("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
-                    Pdata["step"] = "5";
-                    Pdata["subStep"] = "1";
+            statePublish("本机通道"+String(filamentID)+"|上料通道"+String(lastFilament)+"|下一耗材通道"+String(nextFilament));
+            
+            if (amsStatus == "768"){
+                //如果已经换色结束,不再进行进退了操作
+                statePublish("换色已结束!");
+                step = 4;
+                subStep = 1;
+            }else if (filamentID == lastFilament){
+                statePublish("本机通道["+String(filamentID)+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
+                if (nextFilament == filamentID){
+                    statePublish("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
+                    isFirstTime = false;
+                    step = 5;
+                    subStep = 1;
                 }else{
-                    Serial.println("下一耗材通道与本机通道不同，需要换料，准备退料");
-                    Pdata["step"] = "2";
-                    Pdata["subStep"] = "1";
+                    if (amsStatus != "0"){
+                        statePublish("下一耗材通道与本机通道不同，需要换料，准备退料");
+                        step = 2;
+                        subStep = 1;
+                    }else{
+                        statePublish("退料已结束！");
+                        step = 4;
+                        subStep = 1;
+                    }
                 }
             }else{
-                Serial.println("本机通道["+String(Pdata["filamentID"])+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
-                if (nextFilament == Pdata["filamentID"]){
-                    Serial.println("本机通道将要换色，准备送料");
-                    Pdata["step"] = String("3");
-                    Pdata["subStep"] = String("1");
+                statePublish("本机通道["+String(filamentID)+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
+                if (nextFilament == filamentID){
+                    if (lastFilament == -4){
+                        statePublish("首次换色！先退料再送料！");
+                        isFirstTime = true;
+                        bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+                    }else{
+                        statePublish("本机通道将要换色，准备送料");
+                        isFirstTime = false;
+                    }
+                    if (amsStatus == "258" or amsStatus == "261"){
+                        subStep = 2;
+                    }else if(amsStatus == "262"){
+                        subStep = 3;
+                    }else if(amsStatus == "263"){
+                        subStep = 4;
+                    }else{
+                        subStep = 1;
+                    }
+                    subStep = 1;
+                    step = 3;
                 }else{
-                    Serial.println("本机通道与本次换色无关，无需换色");
-                    Pdata["step"] = String("4");
-                    Pdata["subStep"] = String("1");
+                    if (lastFilament == -4){
+                        isFirstTime = false;
+                        statePublish("首次换色……等待其它通道操作");
+                    }
+                    statePublish("本机通道与本次换色无关，无需换色");
+                    step = 4;
+                    subStep = 1;
                 }
             }
-        }else{ledAll(0,0,255);}
-    }else if (Pdata["step"] == "2"){
-        if (Pdata["subStep"] == "1"){
-            Serial.println("进入退料状态");
+        }else{
+            ledAll(ledR,ledG,ledB);
+            }
+    }if (step == 2){
+        if (subStep == 1){
+            statePublish("进入退料状态");
             leds.clear();
             leds.setPixelColor(2,leds.Color(255,255,255));
             leds.show();
-            client.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
-            Pdata["subStep"] = "2";
-        }else if (Pdata["subStep"] == "2"){
+            bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+            reSendUnload = true;
+            subStep = 2;
+        }else if (subStep == 2){
             leds.setPixelColor(1,leds.Color(255,255,255));
             leds.show();
-            if (printError == "318750723") {
-                Serial.println("拔出耗材");
+            if (not reSendUnload){
+                reSendUnload = true;
+                delay(3000);
+                statePublish("仍未退料,发出退料请求");
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+            }else if (printError == "318750723" or printError == "134184963") {
+                statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
-                Pdata["subStep"] = "3";
-            } else if (printError == "318734339") {
-                Serial.println("拔出耗材");
+                pullBackTimeOut = millis();
+                pullBackTimes = 1;
+                subStep = 3;
+            } else if (printError == "318734339" or printError == "134201347") {
+                statePublish("拔出耗材");
                 sv.push();
                 mc.backforward();
-                client.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
-                Pdata["subStep"] = "3";
+                pullBackTimeOut = millis();
+                pullBackTimes = 1;
+                bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
+                subStep = 3;
             }
-        }else if (Pdata["subStep"] == "3" && amsStatus == "0"){
-            Serial.println("退料完成，本次换色完成");
-            leds.setPixelColor(2,leds.Color(255,255,255));
-            leds.show();
-            delay(backTime);
-            sv.pull();
-            mc.stop();
-            Pdata["step"] = "4";
-            Pdata["subStep"] = "1";
+        }else if (subStep == 3){
+            if (amsStatus == "0"){
+                statePublish("退料完成，本次换色完成");
+                leds.setPixelColor(2,leds.Color(255,255,255));
+                leds.show();
+                delay(backTime);
+                sv.pull();
+                mc.stop();
+                step = 4;
+                subStep = 1;
+            }else{
+                if ((millis() - pullBackTimeOut)>30*1000){
+                    sv.pull();
+                    mc.stop();
+                    statePublish("退料超时，请手动拔出耗材并检查机器状态！");
+                }else{
+                    sv.push();
+                    mc.backforward();
+                }
+            }
         }
-    }else if (Pdata["step"] == "3"){
-        if (Pdata["subStep"] == "1"){
+    }else if (step == 3){
+        isSendFilament = true;
+        if (subStep == 1){
             if (amsStatus == "0") {
-                Serial.println("进入送料状态");
+                statePublish("进入送料状态");
                 leds.clear();
                 leds.setPixelColor(2,leds.Color(255,255,0));
                 leds.show();
-                client.publish(bambu_topic_publish.c_str(), bambu_load.c_str());
-                Pdata["subStep"] = "2"; // 更新 subStep
+                bambuClient.publish(bambu_topic_publish.c_str(), bambu_load.c_str());
+                subStep = 2; // 更新 subStep
             } else {
                 if (!unloadMsg){
-                    Serial.println("等待耗材退料完成……");
+                    if (isFirstTime){statePublish("请手动拔出上料料线");}
+                    else{statePublish("等待耗材退料完成……");}
                     unloadMsg = true;
                 }else{
                     Serial.print(".");
@@ -374,55 +472,77 @@ void callback(char* topic, byte* payload, unsigned int length) {
                     inLed--;
                 }
             }
-        }else if (Pdata["subStep"] == "2" && printError == "318750726"){
-            Serial.println("送入耗材");
+        }else if (subStep == 2 && (printError == "318750726" or printError == "134201350")){
+            statePublish("送入耗材");
             sv.push();
             mc.forward();
-            Pdata["subStep"] = "3";
+            subStep = 3;
+            sendOutTimeOut = millis();
+            sendOutTimes = 1;
 
             leds.clear();
             leds.setPixelColor(2,leds.Color(255,255,0));
             leds.setPixelColor(1,leds.Color(255,255,0));
             leds.show();
-        }else if ((Pdata["subStep"] == "3" && amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
-            Serial.println("停止送料");
-            mc.stop();
-            client.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
-            Pdata["subStep"] = "4";
+        }else if (subStep == 3){
+            if ((amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
+                statePublish("停止送料");
+                mc.stop();
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
+                subStep = 4;
 
-            leds.setPixelColor(0,leds.Color(255,255,0));
-            leds.show();
-        }else if (Pdata["subStep"] == "4"){
+                leds.setPixelColor(0,leds.Color(255,255,0));
+                leds.show();
+            }else{
+                if (sendOutTimes <=3){
+                    if ((millis() - sendOutTimeOut)>30*1000){
+                        statePublish("送料超时!尝试重新送料中");
+                        sendOutTimeOut = millis();
+                        sendOutTimes += 1;
+                        sv.push();
+                        mc.backforward();
+                        delay(3*1000);
+                        sv.push();
+                        mc.forward();
+                    }else{
+                        sv.push();
+                        mc.forward();
+                    }
+                }else{
+                    statePublish("送料错误！请手动送料并检查挤出机状态!");
+                }
+            }
+        }else if (subStep == 4){
             if (hwSwitchState == "0") {
-                Serial.println("检测到送料失败，重新送料!");
+                statePublish("检测到送料失败，重新送料!");
                 mc.backforward();
                 delay(2000);
                 mc.stop();
-                Pdata["subStep"] = "2";
+                subStep = 2;
                 
                 leds.setPixelColor(2,leds.Color(255,255,0));
                 leds.setPixelColor(1,leds.Color(255,0,0));
                 leds.show();
             } else if (hwSwitchState == "1") {
-                Serial.println("送料成功，等待挤出换料");
-                sv.pull();
-                Pdata["subStep"] = "5"; // 更新 subStep
+                statePublish("送料成功，等待挤出换料");
+                sv.pull(); 
+                subStep = 5; // 更新 subStep
 
                 leds.setPixelColor(2,leds.Color(255,255,0));
                 leds.setPixelColor(1,leds.Color(0,255,0));
                 leds.show();
             }
-        }else if (Pdata["subStep"] == "5"){
-            if (printError == "318734343") {
+        }else if (subStep == 5){
+            if (printError == "318734343" or printError == "134184967") {
                 if (hwSwitchState == "1"){
-                    Serial.println("被虚晃一枪！重新点击确认");
-                    client.publish(bambu_topic_publish.c_str(), bambu_done.c_str());
+                    statePublish("被虚晃一枪！重新点击确认");
+                    bambuClient.publish(bambu_topic_publish.c_str(), bambu_done.c_str());
                     leds.setPixelColor(2,leds.Color(255,255,0));
                     leds.setPixelColor(1,leds.Color(0,255,0));
                     leds.setPixelColor(0,leds.Color(0,255,0));
                     leds.show();
                 }else if (hwSwitchState == "0"){
-                    Serial.println("检测到送料失败……进入步骤AGAIN重新送料");
+                    statePublish("检测到送料失败……进入步骤AGAIN重新送料");
                     leds.setPixelColor(2,leds.Color(255,255,0));
                     leds.setPixelColor(1,leds.Color(255,0,0));
                     leds.setPixelColor(0,leds.Color(255,0,0));
@@ -431,30 +551,30 @@ void callback(char* topic, byte* payload, unsigned int length) {
                     mc.backforward();
                     delay(2000);
                     mc.stop();
-                    Pdata["subStep"] = "AGAIN";
+                    subStep = AGAIN;
                 }
             } else if (amsStatus == "768") {
-                Serial.println("芜湖~换料完成！");
+                statePublish("芜湖~换料完成！");
                 ledAll(0,255,0);
                 delay(1000);
-                client.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
-                Pdata["step"] = "4";
-                Pdata["subStep"] = "1";
+                bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
+                step = 4;
+                subStep = 1;
             }
-        }else if (Pdata["subStep"] == "AGAIN"){
+        }else if (subStep == AGAIN){
             if (hwSwitchState == "0"){
-                Serial.println("尝试重新送料");
+                statePublish("尝试重新送料");
                 mc.forward();
             }else if (hwSwitchState == "1"){
-                Serial.println("送料成功!");
+                statePublish("送料成功!");
                 mc.stop();
                 sv.pull();
-                Pdata["subStep"] = "5";
+                subStep = 5;
             }
         }
-    }else if (Pdata["step"] == "4"){
+    }else if (step == 4){
         if (!completeMSG){
-            Serial.println("进入看戏状态,等待换色完成");
+            statePublish("进入看戏状态,等待换色完成");
             completeMSG = true;
         }else{
             Serial.print(".");
@@ -471,17 +591,26 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }
 
         if (amsStatus == "1280" and gcodeState != "PAUSE") {
-            String nextFilament = Pdata["nextFilament"].as<String>();
-            Serial.println("换色完成！切换上料通道为["+nextFilament+"]");
-            Pdata["step"] = "1";
-            Pdata["subStep"] = "1";
-            Pdata["lastFilament"] = nextFilament;
+            statePublish("换色完成！切换上料通道为["+String(nextFilament)+"]");
+            step = 1;
+            subStep = 1;
+            isFirstTime = false;
+            lastFilament = nextFilament;
             ledAll(0,255,0);
+            if(isSendFilament){
+                delay(500);
+                statePublish("发送新的温度!");
+                statePublish("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}");
+                bambuClient.publish(bambu_topic_publish.c_str(),
+                ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}")
+                .c_str());
+            }
         }
-    }else if (Pdata["step"] == "5"){
-        client.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
+    }else if (step == 5){
+        bambuClient.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
+        delay(500);
         if (!completeMSG){
-            Serial.println("发送继续指令");
+            statePublish("发送继续指令");
             completeMSG = true;
         }else{
             Serial.print(".");
@@ -498,25 +627,25 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }
 
         if (amsStatus == "1280") {
-            Serial.println("完成!");
-            Pdata["step"] = "1";
-            Pdata["subStep"] = "1";
+            statePublish("完成!");
+            step = 1;
+            subStep = 1;
             ledAll(0,255,0);
         }
     }
-    
-    writePData(Pdata);
 }
 
 //定时任务
-void timerCallback() {
-    if (debug){Serial.println("定时任务执行！");}
-    client.publish(bambu_topic_publish.c_str(), bambu_status.c_str());
+void bambuTimerCallback() {
+    if (debug){Serial.println("bambu定时任务执行！");}
+    bambuClient.publish(bambu_topic_publish.c_str(), bambu_status.c_str());
 }
 
 void setup() {
     leds.begin();
     Serial.begin(115200);
+    Serial1.begin(115200);
+    pinMode(2,INPUT);
     LittleFS.begin();
     delay(1);
     leds.clear();
@@ -585,13 +714,13 @@ void setup() {
         while (!(Serial.available() > 0)){
             delay(100);
         }
-        filamentID = Serial.readString();
+        filamentID = Serial.readString().toInt();
         ledAll(0,255,0);
-        Serial.println("获取到的数据-> "+filamentID);
+        Serial.println("获取到的数据-> "+String(filamentID));
         
         delay(500);
         ledAll(255,0,0);
-    
+
         Serial.println("7.请输入回抽延时[单位毫秒]:");
         while (!(Serial.available() > 0)){
             delay(100);
@@ -600,7 +729,16 @@ void setup() {
         backTime = Serial.readString().toInt();
         ledAll(0,255,0);
         Serial.println("获取到的数据-> "+String(backTime));
+        
+        Serial.println("8.请输入本通道耗材温度(后续可更改):");
+        while (!(Serial.available() > 0)){
+            delay(100);
+        }
 
+        filamentTemp = Serial.readString().toInt();
+        ledAll(0,255,0);
+        Serial.println("获取到的数据-> "+String(filamentTemp));
+        
         JsonDocument Cdata;
         Cdata["wifiName"] = wifiName;
         Cdata["wifiKey"] = wifiKey;
@@ -610,6 +748,14 @@ void setup() {
         Cdata["filamentID"] = filamentID;
         Cdata["ledBrightness"] = 100;
         Cdata["backTime"] = backTime;
+        Cdata["filamentTemp"]  = filamentTemp;
+        Cdata["filamentType"] = filamentType;
+        ledR = 0;
+        ledG = 0;
+        ledB = 255;
+        Cdata["ledR"] = ledR;
+        Cdata["ledG"] = ledG;
+        Cdata["ledB"] = ledB;
         ledBrightness = 100;
         writeCData(Cdata);
     }else{
@@ -620,15 +766,22 @@ void setup() {
         bambu_mqtt_broker = Cdata["bambu_mqtt_broker"].as<String>();
         bambu_mqtt_password = Cdata["bambu_mqtt_password"].as<String>();
         bambu_device_serial = Cdata["bambu_device_serial"].as<String>();
-        filamentID = Cdata["filamentID"].as<String>();
+        filamentID = Cdata["filamentID"].as<int>();
         ledBrightness = Cdata["ledBrightness"].as<unsigned int>();
         backTime = Cdata["backTime"].as<int>();
+        filamentTemp = Cdata["filamentTemp"].as<int>();
+        filamentType = Cdata["filamentType"].as<String>();
+        ledR = Cdata["ledR"];
+        ledG = Cdata["ledG"];
+        ledB = Cdata["ledB"];
         ledAll(0,255,0);
     }
     bambu_topic_subscribe = "device/" + String(bambu_device_serial) + "/report";
     bambu_topic_publish = "device/" + String(bambu_device_serial) + "/request";
     leds.setBrightness(ledBrightness);
 
+    mc.stop();
+    sv.pull();
     connectWF(wifiName,wifiKey);
 
     servo.attach(servoPin,500,2500);
@@ -637,44 +790,24 @@ void setup() {
     pinMode(bufferPin1, INPUT_PULLDOWN_16);
     pinMode(bufferPin2, INPUT_PULLDOWN_16);
 
-    espClient.setInsecure();
-    client.setServer(bambu_mqtt_broker.c_str(), 8883);
-    client.setCallback(callback);
-    client.setBufferSize(4096);
-    
-    if (!LittleFS.exists("/data.json")) {
-        JsonDocument Pdata;
-        Pdata["lastFilament"] = "1";
-        Pdata["step"] = "1";
-        Pdata["subStep"] = "1";
-        Pdata["filamentID"] = filamentID;
-        writePData(Pdata);
-        Serial.println("初始化数据成功！");
-    } else {
-        JsonDocument Pdata = getPData();
-        Pdata["filamentID"] = filamentID;
-        //Pdata["lastFilament"] = "1";//每次都将上一次的耗材定义为1(不建议使用)
-        writePData(Pdata);
-        serializeJsonPretty(Pdata, Serial);
-        Serial.println("成功读取配置文件!");
-    }
+    bambuWifiClient.setInsecure();
+    bambuClient.setServer(bambu_mqtt_broker.c_str(), 8883);
+    bambuClient.setCallback(bambuCallback);
+    bambuClient.setBufferSize(4096);
 
-    //[因为与pwm冲突已弃用]布置定时任务，向拓竹索要当前情况
-    //timer1_attachInterrupt(timerCallback);  // 绑定定时器中断服务程序
-    //timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP); // 设置定时器分频和模式
-    //timer1_write(1000000);  // 设置定时器触发周期，单位为微秒，这里设置为 1 秒
+    connectBambuMQTT();
 }
 
 void loop() {
-    if (!client.connected()) {
-        connectMQTT();
+    if (!bambuClient.connected()) {
+        connectBambuMQTT();
     }
+    bambuClient.loop();
 
-    client.loop();
-
-    if (millis()-lastTime > renewTime and millis()-checkTime > renewTime*0.8){
-        timerCallback();
-        checkTime = millis();
+    unsigned long nowTime =  millis();
+    if (nowTime-bambuLastTime > bambuRenewTime and nowTime-bambuCheckTime > bambuRenewTime*0.8){
+        bambuTimerCallback();
+        bambuCheckTime = millis();
         leds.setPixelColor(0,leds.Color(10,255,10));
         leds.show();
         delay(10);
@@ -685,88 +818,105 @@ void loop() {
     if (not mc.getStopState()){
         if (digitalRead(bufferPin1) == 1 or digitalRead(bufferPin2) == 1){
         mc.stop();}
-        delay(500);
+        delay(100);
     }
 
-    if (Serial.available()>0){
-        String content = Serial.readString();
-        if (content=="delet config"){
-            if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}
-        }else if (content == "delet data")
-        {
-            if(LittleFS.remove("/data.json")){Serial.println("SUCCESS!");ESP.restart();}
-        }else if (content == "confirm")
-        {
-            client.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
-            Serial.println("confirm SEND!");
-        }else if (content == "resume")
-        {
-            client.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
-            Serial.println("resume SEND!");
-        }else if (content == "debug")
-        {
-            debug = not debug;
-            Serial.println("debug change");
-        }else if (content == "push")
-        {
-            sv.push();
-            Serial.println("push COMPLETE");
-        }else if (content == "pull")
-        {
-            sv.pull();
-            Serial.println("pull COMPLETE");
-        }else if (content.indexOf("sv") != -1)
-        {   
-            String numberString = "";
-            for (unsigned int i = 0; i < content.length(); i++) {
-            if (isdigit(content[i])) {
-                numberString += content[i];
-            }
-            }
-            int number = numberString.toInt(); 
-            sv.writeAngle(number);
-            Serial.println("["+numberString+"]COMPLETE");
-        }else if (content == "forward" or content == "fw")
-        {
-            mc.forward();
-            Serial.println("forwarding!");
-        }else if (content == "backforward" or content == "bfw")
-        {
-            mc.backforward();
-            Serial.println("backforwarding!");
-        }else if (content == "stop"){
-            mc.stop();
-            Serial.println("Stop!");
-        }else if (content.indexOf("renewTime") != -1 or content.indexOf("rt") != -1)        {
-            String numberString = "";
-            for (unsigned int i = 0; i < content.length(); i++) {
-            if (isdigit(content[i])) {
-                numberString += content[i];
-            }}
-            unsigned int number = numberString.toInt();
-            renewTime = number;
-            Serial.println("["+numberString+"]COMPLETE");
-        } else if (content.indexOf("ledbright") != -1 or content.indexOf("lb") != -1)        {
-            String numberString = "";
-            for (unsigned int i = 0; i < content.length(); i++) {
-            if (isdigit(content[i])) {
-                numberString += content[i];
-            }}
-            unsigned int number = numberString.toInt();
-            ledBrightness = number;
-            JsonDocument Cdata = getCData();
-            Cdata["ledBrightness"] = ledBrightness;
-            writeCData(Cdata);
-            Serial.println("["+numberString+"]修改成功！亮度重启后生效");
-        }  else if (content == "rgb"){
-            Serial.println("RGB Testing......");
-            ledAll(255,0,0);
-            delay(1000);
-            ledAll(0,255,0);
-            delay(1000);
-            ledAll(0,0,255);
-            delay(1000);
+    if (Serial.available()){
+        String GETcontent = Serial.readString(); 
+        GETcontent.replace("\r", ""); // 移除所有的 \r 字符
+        GETcontent.replace("\n", "");
+        int msgID;
+        String content;
+        if (GETcontent.indexOf("|") != -1){
+            msgID = GETcontent.substring(0,GETcontent.indexOf("|")).toInt();
+            content = GETcontent.substring(GETcontent.indexOf("|") + 1);
+        }else{
+            msgID = filamentID;
+            content = GETcontent;
         }
-    }
-    
+        if (msgID != filamentID){
+            Serial.println(String(msgID)+"|"+content);
+        }else{
+            if (content=="delet config"){
+                if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}
+            }else if (content == "delet data")
+            {
+                if(LittleFS.remove("/data.json")){Serial.println("SUCCESS!");ESP.restart();}
+            }else if (content == "delet ha")
+            {
+                if(LittleFS.remove("/ha.json")){Serial.println("SUCCESS!");ESP.restart();}
+            }else if (content == "confirm")
+            {
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
+                Serial.println("confirm SEND!");
+            }else if (content == "resume")
+            {
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
+                Serial.println("resume SEND!");
+            }else if (content == "debug")
+            {
+                debug = not debug;
+                Serial.println("debug change");
+            }else if (content == "push")
+            {
+                sv.push();
+                Serial.println("push COMPLETE");
+            }else if (content == "pull")
+            {
+                sv.pull();
+                Serial.println("pull COMPLETE");
+            }else if (content.indexOf("sv") != -1)
+            {   
+                String numberString = "";
+                for (unsigned int i = 0; i < content.length(); i++) {
+                if (isdigit(content[i])) {
+                    numberString += content[i];
+                }
+                }
+                int number = numberString.toInt(); 
+                sv.writeAngle(number);
+                Serial.println("["+numberString+"]COMPLETE");
+            }else if (content == "forward" or content == "fw")
+            {
+                mc.forward();
+                Serial.println("forwarding!");
+            }else if (content == "backforward" or content == "bfw")
+            {
+                mc.backforward();
+                Serial.println("backforwarding!");
+            }else if (content == "stop"){
+                mc.stop();
+                Serial.println("Stop!");
+            }else if (content.indexOf("renewTime") != -1 or content.indexOf("rt") != -1)        {
+                String numberString = "";
+                for (unsigned int i = 0; i < content.length(); i++) {
+                if (isdigit(content[i])) {
+                    numberString += content[i];
+                }}
+                unsigned int number = numberString.toInt();
+                bambuRenewTime = number;
+                Serial.println("["+numberString+"]COMPLETE");
+            }else if (content.indexOf("ledbright") != -1 or content.indexOf("lb") != -1)        {
+                String numberString = "";
+                for (unsigned int i = 0; i < content.length(); i++) {
+                if (isdigit(content[i])) {
+                    numberString += content[i];
+                }}
+                unsigned int number = numberString.toInt();
+                ledBrightness = number;
+                JsonDocument Cdata = getCData();
+                Cdata["ledBrightness"] = ledBrightness;
+                writeCData(Cdata);
+                Serial.println("["+numberString+"]修改成功！亮度重启后生效");
+            }else if (content == "rgb"){
+                Serial.println("RGB Testing......");
+                ledAll(255,0,0);
+                delay(1000);
+                ledAll(0,255,0);
+                delay(1000);
+                ledAll(0,0,255);
+                delay(1000);
+            }
+        }
+    }    
 }
