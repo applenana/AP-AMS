@@ -25,7 +25,7 @@ String ha_mqtt_password;
 
 //-=-=-=-=-=-↓系统配置↓-=-=-=-=-=-=-=-=-=
 bool debug = false;
-String sw_version = "v2.5";
+String sw_version = "v1.6";
 String bambu_mqtt_user = "bblp";
 String bambu_mqtt_id = "ams";
 String bambu_topic_subscribe;// = "device/" + String(bambu_device_serial) + "/report";
@@ -54,19 +54,17 @@ int ledB;
 //-=-=-=-=-=-↑系统配置↑-=-=-=-=-=-=-=-=-=
 
 //-=-=-=-=-=-mqtt回调逻辑需要的变量-=-=-=-=-=-=
-bool unloadMsg;
-bool completeMSG;
-bool reSendUnload;
-bool isSendFilament;
 long sendOutTimeOut;
+bool isSendOut;
 int sendOutTimes;
 long pullBackTimeOut;
+bool isPullBack;
 int pullBackTimes;
 int lastFilament;
 int nextFilament;
-bool isFirstTime;//是否第一次换色
-int step = 1;
-int subStep = 1;
+int subTaskID = 0;
+bool sameTask;
+bool DoneClick;
 //-=-=-=-=-=-=end
 
 unsigned long lastMsg = 0;
@@ -248,11 +246,17 @@ void connectBambuMQTT() {
             Serial.print("连接失败，失败原因:");
             Serial.print(bambuClient.state());
             Serial.println("在一秒后重新连接");
+            mc.stop();
+            sv.pull();
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("WiFi连接已断开,正在尝试重连...");
+                connectWF(wifiName, wifiKey);
+            }
             delay(1000);
             ledAll(255,0,0);
         }
 
-        if (count > 30){
+        if (count > 10){
             ledAll(255,0,0);
             Serial.println("拓竹连接超时!请检查你的配置");
             Serial.println("拓竹ip地址["+String(bambu_mqtt_broker)+"]");
@@ -263,9 +267,12 @@ void connectBambuMQTT() {
             Serial.println("1:已经确认我的配置没有问题!继续重试!");
             Serial.println("2:我的配置有误,删除配置重新书写");
             Serial.println("请输入你的选择:");
+            int getCount = 1;
             while (Serial.available() == 0){
+                if (getCount > 50){ESP.restart();}
                 Serial.print(".");
                 delay(100);
+                getCount += 1;
             }
             String content = Serial.readString();
             if (content == "2"){if(LittleFS.remove("/config.json")){Serial.println("SUCCESS!");ESP.restart();}}
@@ -286,6 +293,12 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
     String mcPercent = (*data)["print"]["mc_percent"].as<String>();
     String mcRemainingTime = (*data)["print"]["mc_remaining_time"].as<String>();
     String layerNum = (*data)["print"]["layer_num"].as<String>();
+    if ((*data)["print"]["subtask_id"].as<String>() != "null"){
+        if (subTaskID != (*data)["print"]["subtask_id"].as<int>()){
+            sameTask = false;
+            subTaskID = (*data)["print"]["subtask_id"].as<int>();
+        }
+    }
     // 手动释放内存
     delete data;
 
@@ -299,339 +312,129 @@ void bambuCallback(char* topic, byte* payload, unsigned int length) {
             statePublish("-=-=-=-=-");}
         bambuLastTime = millis();
     }
-    
-    /*
-    step代表了换色进行的五大主要步骤
-    1——收到换色指令，进行规划和分配  红绿蓝
-    2——退料 白色
-    3——进料 黄色
-    4——待命 蓝绿色
-    5——继续 绿色
-    subStep代表子步骤，用于细分主步骤
-    */
 
-    if (gcodeState == "FAILED"){
-        step = 1;
-        subStep = 1;
-    }
     if (gcodeState == "PAUSE" and mcPercent.toInt() > 100){
+        //进入换色过程
         nextFilament = mcPercent.toInt() - 110 + 1;
         lastFilament = layerNum.toInt() -10 + 1; 
-        if (step == 1){
-            statePublish("收到换色指令，进入换色准备状态");
-            leds.setPixelColor(2,leds.Color(255,0,0));
-            leds.setPixelColor(1,leds.Color(0,255,0));
-            leds.setPixelColor(0,leds.Color(0,0,255));
-            leds.show();
-            unloadMsg = false;
-            completeMSG = false;
-            reSendUnload = false;
-            isSendFilament = false;
-            sv.pull();
-            mc.stop();
-            statePublish("本机通道"+String(filamentID)+"|上料通道"+String(lastFilament)+"|下一耗材通道"+String(nextFilament));
-            
-            if (amsStatus == "768"){
-                //如果已经换色结束,不再进行进退了操作
-                statePublish("换色已结束!");
-                step = 4;
-                subStep = 1;
-            }else if (filamentID == lastFilament){
-                statePublish("本机通道["+String(filamentID)+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
-                if (nextFilament == filamentID){
-                    statePublish("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
-                    isFirstTime = false;
-                    step = 5;
-                    subStep = 1;
-                }else{
-                    if (amsStatus != "0"){
-                        statePublish("下一耗材通道与本机通道不同，需要换料，准备退料");
-                        step = 2;
-                        subStep = 1;
-                    }else{
-                        statePublish("退料已结束！");
-                        step = 4;
-                        subStep = 1;
-                    }
-                }
+        statePublish("收到换色指令，进入换色准备状态");
+        leds.setPixelColor(2,leds.Color(255,0,0));
+        leds.setPixelColor(1,leds.Color(0,255,0));
+        leds.setPixelColor(0,leds.Color(0,0,255));
+        leds.show();
+        sv.pull();
+        mc.stop();
+        statePublish("本机通道"+String(filamentID)+"|上料通道"+String(lastFilament)+"|下一耗材通道"+String(nextFilament));
+        
+        if (filamentID == lastFilament){
+            statePublish("本机通道["+String(filamentID)+"]在上料");//如果处于上料状态，那么对于这个换色单元来说，接下来只能退料或者继续打印（不退料）
+            if (nextFilament == filamentID){
+                statePublish("本机通道,上料通道,下一耗材通道全部相同!无需换色!");
+                bambuClient.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
             }else{
-                statePublish("本机通道["+String(filamentID)+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
-                if (nextFilament == filamentID){
-                    if (lastFilament == -4){
-                        statePublish("首次换色！先退料再送料！");
-                        isFirstTime = true;
-                        bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+                statePublish("下一耗材通道与本机通道不同，需要换料，准备退料");
+                if (amsStatus == "1280"){
+                    statePublish("发送退料指令");
+                    bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+                    leds.setPixelColor(2,leds.Color(0,0,255));
+                    leds.setPixelColor(1,leds.Color(0,0,0));
+                    leds.setPixelColor(0,leds.Color(0,0,0));
+                    leds.show();
+                    isPullBack = true;
+                }else if (amsStatus == "260"){
+                    statePublish("拔出耗材");
+                    leds.setPixelColor(2,leds.Color(0,0,255));
+                    leds.setPixelColor(1,leds.Color(0,0,255));
+                    leds.setPixelColor(0,leds.Color(0,0,0));
+                    leds.show();
+                    mc.backforward();
+                    sv.push();
+                    if (isPullBack){
+                        pullBackTimeOut = millis();
+                        isPullBack = false;
                     }else{
-                        statePublish("本机通道将要换色，准备送料");
-                        isFirstTime = false;
+                        if ((millis() - pullBackTimeOut) > 30*1000){
+                            mc.stop();
+                            sv.pull();
+                            statePublish("退料超时,请手动操作并检查挤出机状态");
+                        }
                     }
-                    if (amsStatus == "258" or amsStatus == "261"){
-                        subStep = 2;
-                    }else if(amsStatus == "262"){
-                        subStep = 3;
-                    }else if(amsStatus == "263"){
-                        subStep = 4;
-                    }else{
-                        subStep = 1;
-                    }
-                    subStep = 1;
-                    step = 3;
-                }else{
-                    if (lastFilament == -4){
-                        isFirstTime = false;
-                        statePublish("首次换色……等待其它通道操作");
-                    }
-                    statePublish("本机通道与本次换色无关，无需换色");
-                    step = 4;
-                    subStep = 1;
+                }else if (amsStatus == "0"){
+                    statePublish("停止拔出耗材");
+                    leds.setPixelColor(2,leds.Color(0,0,0));
+                    leds.setPixelColor(1,leds.Color(0,0,0));
+                    leds.setPixelColor(0,leds.Color(0,0,255));
+                    leds.show();
+                    delay(backTime);
+                    mc.stop();
+                    sv.pull();
                 }
             }
         }else{
-            ledAll(ledR,ledG,ledB);
-            }
-    }if (step == 2){
-        if (subStep == 1){
-            statePublish("进入退料状态");
-            leds.clear();
-            leds.setPixelColor(2,leds.Color(255,255,255));
-            leds.show();
-            bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
-            reSendUnload = true;
-            subStep = 2;
-        }else if (subStep == 2){
-            leds.setPixelColor(1,leds.Color(255,255,255));
-            leds.show();
-            if (not reSendUnload){
-                reSendUnload = true;
-                delay(3000);
-                statePublish("仍未退料,发出退料请求");
-                bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
-            }else if (printError == "318750723" or printError == "134184963") {
-                statePublish("拔出耗材");
-                sv.push();
-                mc.backforward();
-                pullBackTimeOut = millis();
-                pullBackTimes = 1;
-                subStep = 3;
-            } else if (printError == "318734339" or printError == "134201347") {
-                statePublish("拔出耗材");
-                sv.push();
-                mc.backforward();
-                pullBackTimeOut = millis();
-                pullBackTimes = 1;
-                bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
-                subStep = 3;
-            }
-        }else if (subStep == 3){
-            if (amsStatus == "0"){
-                statePublish("退料完成，本次换色完成");
-                leds.setPixelColor(2,leds.Color(255,255,255));
-                leds.show();
-                delay(backTime);
-                sv.pull();
-                mc.stop();
-                step = 4;
-                subStep = 1;
-            }else{
-                if ((millis() - pullBackTimeOut)>30*1000){
+            statePublish("本机通道["+String(filamentID)+"]不在上料");//如果本换色单元不在上料，那么又两个可能，要么本次换色与自己无关，要么就是要准备进料
+            if (nextFilament == filamentID){
+                if (lastFilament == -4 and !sameTask){
+                    statePublish("首次换色！先退料再送料！");
+                    bambuClient.publish(bambu_topic_publish.c_str(),bambu_unload.c_str());
+                    sameTask = true;
+                    delay(5000);
+                }
+                statePublish("本机通道将要换色，准备送料");
+                if (amsStatus == "0"){
+                    statePublish("发送进料指令");
+                    bambuClient.publish(bambu_topic_publish.c_str(), bambu_load.c_str());
+                    leds.setPixelColor(2,leds.Color(255,0,255));
+                    leds.setPixelColor(1,leds.Color(0,0,0));
+                    leds.setPixelColor(0,leds.Color(0,0,0));
+                    leds.show();
+                    isSendOut = true;
+                }else if (amsStatus == "261"){
+                    statePublish("插入耗材");
+                    mc.forward();
+                    sv.push();
+                    leds.setPixelColor(2,leds.Color(255,0,255));
+                    leds.setPixelColor(1,leds.Color(255,0,255));
+                    leds.setPixelColor(0,leds.Color(0,0,0));
+                    leds.show();
+                    DoneClick = true;
+                    if (isSendOut){
+                        sendOutTimeOut = millis();
+                        isSendOut = false;
+                    }else{
+                        if ((millis() - sendOutTimeOut) > 30*1000){
+                            mc.stop();
+                            sv.pull();
+                            statePublish("进料超时,请手动操作并检查挤出机状态");
+                        }
+                    }
+                }else if (amsStatus == "262" and hwSwitchState == "1"){
+                    statePublish("送入成功,停止插入");
                     sv.pull();
                     mc.stop();
-                    statePublish("退料超时，请手动拔出耗材并检查机器状态！");
-                }else{
-                    sv.push();
-                    mc.backforward();
-                }
-            }
-        }
-    }else if (step == 3){
-        isSendFilament = true;
-        if (subStep == 1){
-            if (amsStatus == "0") {
-                statePublish("进入送料状态");
-                leds.clear();
-                leds.setPixelColor(2,leds.Color(255,255,0));
-                leds.show();
-                bambuClient.publish(bambu_topic_publish.c_str(), bambu_load.c_str());
-                subStep = 2; // 更新 subStep
-            } else {
-                if (!unloadMsg){
-                    if (isFirstTime){statePublish("请手动拔出上料料线");}
-                    else{statePublish("等待耗材退料完成……");}
-                    unloadMsg = true;
-                }else{
-                    Serial.print(".");
-                }
-
-                //跑马灯
-                if (inLed == -1){
-                    inLed = 2;
-                    ledAll(0,0,0);
-                }else{
-                    leds.setPixelColor(inLed,leds.Color(255,255,0));
-                    leds.show();
-                    inLed--;
-                }
-            }
-        }else if (subStep == 2 && (printError == "318750726" or printError == "134201350")){
-            statePublish("送入耗材");
-            sv.push();
-            mc.forward();
-            subStep = 3;
-            sendOutTimeOut = millis();
-            sendOutTimes = 1;
-
-            leds.clear();
-            leds.setPixelColor(2,leds.Color(255,255,0));
-            leds.setPixelColor(1,leds.Color(255,255,0));
-            leds.show();
-        }else if (subStep == 3){
-            if ((amsStatus == "262" && hwSwitchState == "1") or digitalRead(bufferPin1) == 1){
-                statePublish("停止送料");
-                mc.stop();
-                bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
-                subStep = 4;
-
-                leds.setPixelColor(0,leds.Color(255,255,0));
-                leds.show();
-            }else{
-                if (sendOutTimes <=3){
-                    if ((millis() - sendOutTimeOut)>30*1000){
-                        statePublish("送料超时!尝试重新送料中");
-                        sendOutTimeOut = millis();
-                        sendOutTimes += 1;
-                        sv.push();
-                        mc.backforward();
-                        delay(3*1000);
-                        sv.push();
-                        mc.forward();
-                    }else{
-                        sv.push();
-                        mc.forward();
+                    if (DoneClick){
+                        //只允许点一次，避免后续问题
+                        bambuClient.publish(bambu_topic_publish.c_str(),bambu_done.c_str());
+                        DoneClick = false;
                     }
-                }else{
-                    statePublish("送料错误！请手动送料并检查挤出机状态!");
-                }
-            }
-        }else if (subStep == 4){
-            if (hwSwitchState == "0") {
-                statePublish("检测到送料失败，重新送料!");
-                mc.backforward();
-                delay(2000);
-                mc.stop();
-                subStep = 2;
-                
-                leds.setPixelColor(2,leds.Color(255,255,0));
-                leds.setPixelColor(1,leds.Color(255,0,0));
-                leds.show();
-            } else if (hwSwitchState == "1") {
-                statePublish("送料成功，等待挤出换料");
-                sv.pull(); 
-                subStep = 5; // 更新 subStep
-
-                leds.setPixelColor(2,leds.Color(255,255,0));
-                leds.setPixelColor(1,leds.Color(0,255,0));
-                leds.show();
-            }
-        }else if (subStep == 5){
-            if (printError == "318734343" or printError == "134184967") {
-                if (hwSwitchState == "1"){
-                    statePublish("被虚晃一枪！重新点击确认");
-                    bambuClient.publish(bambu_topic_publish.c_str(), bambu_done.c_str());
-                    leds.setPixelColor(2,leds.Color(255,255,0));
-                    leds.setPixelColor(1,leds.Color(0,255,0));
-                    leds.setPixelColor(0,leds.Color(0,255,0));
+                    leds.setPixelColor(2,leds.Color(255,0,255));
+                    leds.setPixelColor(1,leds.Color(255,0,255));
+                    leds.setPixelColor(0,leds.Color(255,0,255));
                     leds.show();
-                }else if (hwSwitchState == "0"){
-                    statePublish("检测到送料失败……进入步骤AGAIN重新送料");
-                    leds.setPixelColor(2,leds.Color(255,255,0));
-                    leds.setPixelColor(1,leds.Color(255,0,0));
-                    leds.setPixelColor(0,leds.Color(255,0,0));
+                }else if (amsStatus == "768"){
+                    statePublish("换色完成,继续打印");
+                    bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
+                    leds.setPixelColor(2,leds.Color(0,0,0));
+                    leds.setPixelColor(1,leds.Color(0,0,0));
+                    leds.setPixelColor(0,leds.Color(255,0,255));
                     leds.show();
-                    sv.push();
-                    mc.backforward();
-                    delay(2000);
-                    mc.stop();
-                    subStep = AGAIN;
                 }
-            } else if (amsStatus == "768") {
-                statePublish("芜湖~换料完成！");
-                ledAll(0,255,0);
-                delay(1000);
-                bambuClient.publish(bambu_topic_publish.c_str(), bambu_resume.c_str());
-                step = 4;
-                subStep = 1;
-            }
-        }else if (subStep == AGAIN){
-            if (hwSwitchState == "0"){
-                statePublish("尝试重新送料");
-                mc.forward();
-            }else if (hwSwitchState == "1"){
-                statePublish("送料成功!");
-                mc.stop();
-                sv.pull();
-                subStep = 5;
+            }else{
+                statePublish("本机通道与本次换色无关，无需换色");
+                ledAll(255,255,255);
             }
         }
-    }else if (step == 4){
-        if (!completeMSG){
-            statePublish("进入看戏状态,等待换色完成");
-            completeMSG = true;
-        }else{
-            Serial.print(".");
-        }
-
-        //跑马灯
-        if (waitLed == -1){
-            waitLed = 2;
-            ledAll(0,0,0);
-        }else{
-            leds.setPixelColor(waitLed,leds.Color(0,255,255));
-            leds.show();
-            waitLed--;
-        }
-
-        if (amsStatus == "1280" and gcodeState != "PAUSE") {
-            statePublish("换色完成！切换上料通道为["+String(nextFilament)+"]");
-            step = 1;
-            subStep = 1;
-            isFirstTime = false;
-            lastFilament = nextFilament;
-            ledAll(0,255,0);
-            if(isSendFilament){
-                delay(500);
-                statePublish("发送新的温度!");
-                statePublish("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}");
-                bambuClient.publish(bambu_topic_publish.c_str(),
-                ("{\"print\": {\"command\": \"gcode_line\",\"sequence_id\": \"1\",\"param\": \"M109 S"+String(filamentTemp)+"\\n\"},\"user_id\": \"1\"}")
-                .c_str());
-            }
-        }
-    }else if (step == 5){
-        bambuClient.publish(bambu_topic_publish.c_str(),bambu_resume.c_str());
-        delay(500);
-        if (!completeMSG){
-            statePublish("发送继续指令");
-            completeMSG = true;
-        }else{
-            Serial.print(".");
-        }
-        
-        //跑马灯
-        if (completeLed == -1){
-            completeLed = 2;
-            ledAll(0,0,0);
-        }else{
-            leds.setPixelColor(completeLed,leds.Color(0,255,255));
-            leds.show();
-            completeLed--;
-        }
-
-        if (amsStatus == "1280") {
-            statePublish("完成!");
-            step = 1;
-            subStep = 1;
-            ledAll(0,255,0);
-        }
+    }else{
+        ledAll(ledR,ledG,ledB);
     }
 }
 
