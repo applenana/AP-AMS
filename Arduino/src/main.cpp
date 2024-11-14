@@ -4,6 +4,7 @@
 #include "ServoMotor.h"
 #include "Motor.h"
 #include <Adafruit_NeoPixel.h>
+#include <LittleFS.h>
 #include "led.h"
 
 DataPacket datapacket;
@@ -13,12 +14,15 @@ Adafruit_NeoPixel leds(3, 12, NEO_GRB + NEO_KHZ800);//构建leds对象(3个led,1
 unsigned int FilamentIoPin = A0; //断料检测引脚(ADC=>A0)
 String FilamentState = "none"; //断料状态
 bool IsFPinHigh;//ADC是否高电平
+bool Is5sPull = false;//是否使用5s退料模式
+unsigned long LastBootPressTime;//上一次Boot按键被按下的时间
 
 void FilamentChange(bool ToStateIsHigh);
 
 void setup() {
 	Serial.begin(115200,SERIAL_8E1);
     Serial1.begin(115200,SERIAL_8E1);
+    LittleFS.begin();
     leds.begin();
 
     IsFPinHigh = (analogRead(A0) > 1000);
@@ -33,6 +37,26 @@ void loop() {
     if ((analogRead(A0) > 1000) != IsFPinHigh){
         FilamentChange(not IsFPinHigh);
         IsFPinHigh = not IsFPinHigh;
+    }
+
+    if (digitalRead(0) == LOW){
+        while (digitalRead(0) == LOW){
+            delay(10);
+            //等待BOOT被松开
+        }
+        long nowTime = millis();
+        if ((nowTime - LastBootPressTime)<250){//如果0.25秒内按下两次BOOT则判定切换状态
+            //Serial.println("双击BOOT");
+            Is5sPull = not Is5sPull;
+            if (Is5sPull){
+                //Serial.println("5s回抽模式,白灯");
+                ledPC(2,255,255,255);
+            }else{
+                //Serial.println("微动回抽模式,没灯");
+                ledPC(2,0,0,0);
+            }
+        }
+        LastBootPressTime = nowTime;
     }
 
     if (datapacket.index == 0 and Serial.read() == 0x3D){
@@ -116,21 +140,31 @@ void loop() {
 }
 
 void FilamentChange(bool ToStateIsHigh){
-    if (ToStateIsHigh){
-        //低变高-无变有
-        if (FilamentState == "none" or FilamentState == "inexist"){
+    if (Is5sPull){
+        if (ToStateIsHigh){
+            //低变高-无变有
             FilamentState = "exist";
-        }else if (FilamentState == "busy"){
-            mc.stop();
-            sv.pull();
-            FilamentState = "exist";
-      }
-    }else if(not ToStateIsHigh){
-        //高变低-有变无
-        if (FilamentState == "none" or FilamentState == "exist"){
+        }else if(not ToStateIsHigh){
+            //高变低-有变无
             FilamentState = "inexist";
-        }else if (FilamentState == "busy"){
-            mc.forward();
+        }
+    }else{
+        if (ToStateIsHigh){
+            //低变高-无变有
+            if (FilamentState == "none" or FilamentState == "inexist"){
+                FilamentState = "exist";
+            }else if (FilamentState == "busy"){
+                mc.stop();
+                sv.pull();
+                FilamentState = "exist";
+        }
+        }else if(not ToStateIsHigh){
+            //高变低-有变无
+            if (FilamentState == "none" or FilamentState == "exist"){
+                FilamentState = "inexist";
+            }else if (FilamentState == "busy"){
+                mc.forward();
+            }
         }
     }
 }

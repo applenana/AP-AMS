@@ -1,4 +1,5 @@
 #include "processData.h"
+#include "File.h"
 
 void processData(DataPacket data){
     if (data.sequenceNumber >= data.address){
@@ -34,6 +35,14 @@ void processData(DataPacket data){
                         mc.stop();
                         FilamentState = "exist";
                         break;
+                    case 0x03://抽回结束
+                        if (Is5sPull){
+                            delay(7000);//回抽七秒
+                            sv.pull();
+                            mc.stop();
+                            FilamentState = "exist";
+                            break;
+                        }
                 }
 
                 data.length = 0x09;
@@ -41,7 +50,16 @@ void processData(DataPacket data){
                 data.content[0] = 0x00;
                 data.sendPacket(true);
                 //发送回应数据包
-
+                break;
+            case 0x02:
+                WriteByteIntoConfig(data.content,40);
+                //写入配置
+                break;
+            case 0x03:
+                ReadContentFromConfig(data.content,40);
+                //读取配置(更改内容为配置信息)
+                data.sendPacket(true);
+                //发送回应数据包
                 break;
         }
 

@@ -6,4 +6,5 @@
 extern Motor mc;
 extern ServoMotor sv;
 extern String FilamentState;
+extern bool Is5sPull;
 void processData(DataPacket data);
