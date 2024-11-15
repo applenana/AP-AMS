@@ -26,6 +26,7 @@ _✨ 一个简单的适用于拓竹的自动换色系统 ✨_
 ## 使用
 - 你需要准备:
   - 一颗能沉下心来折腾的心
+  - 请先阅读[Wiki](https://github.com/applenana/AP-AMS/wiki)
   - makerworld中提到的部分[材料](https://makerworld.com/zh/models/463829#profileId-372457)
   - 立创开源广场的[材料](https://oshwhub.com/applenana/ap-ams-control-panel-30)
   - 这里的[release](https://github.com/applenana/AP-AMS/releases/)(固件)!
