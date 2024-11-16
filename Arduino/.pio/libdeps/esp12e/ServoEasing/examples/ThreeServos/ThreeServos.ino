@@ -4,7 +4,7 @@
  *  Shows smooth movement from one servo position to another for 3 servos synchronously.
  *  Demonstrates the use of ServoEasingArray and ServoEasingNextPositionArray.
  *
- *  Copyright (C) 2019-2022  Armin Joachimsmeyer
+ *  Copyright (C) 2019-2024  Armin Joachimsmeyer
  *  armin.joachimsmeyer@gmail.com
  *
  *  This file is part of ServoEasing https://github.com/ArminJo/ServoEasing.
@@ -30,13 +30,15 @@
 //#define USE_SERVO_LIB                 // If USE_PCA9685_SERVO_EXPANDER is defined, Activating this enables force additional using of regular servo library.
 #define PROVIDE_ONLY_LINEAR_MOVEMENT  // Activating this disables all but LINEAR movement. Saves up to 1540 bytes program memory.
 //#define DISABLE_COMPLEX_FUNCTIONS     // Activating this disables the SINE, CIRCULAR, BACK, ELASTIC, BOUNCE and PRECISION easings. Saves up to 1850 bytes program memory.
-//#define MAX_EASING_SERVOS 3
 //#define DISABLE_MICROS_AS_DEGREE_PARAMETER // Activating this disables microsecond values as (target angle) parameter. Saves 128 bytes program memory.
-//#define DISABLE_MIN_AND_MAX_CONSTRAINTS    // Activating this disables constraints. Saves 4 bytes RAM per servo but strangely enough no program memory.
+//#define ENABLE_MIN_AND_MAX_CONSTRAINTS     // Activating this enables constraint checking. Requires 4 bytes RAM per servo and 36 bytes program memory.
 //#define DISABLE_PAUSE_RESUME               // Activating this disables pause and resume functions. Saves 5 bytes RAM per servo.
-//#define DEBUG                              // Activating this enables generate lots of lovely debug output for this library.
 
+//#define MAX_EASING_SERVOS 3
+
+//#define DEBUG                              // Activating this enables generate lots of lovely debug output for this library.
 //#define PRINT_FOR_SERIAL_PLOTTER           // Activating this enables generate the Arduino plotter output from ServoEasing.hpp.
+
 #include "ServoEasing.hpp"
 #include "PinDefinitionsAndMore.h"
 
@@ -46,6 +48,7 @@
  * Platform         Servo1      Servo2      Servo3      Analog     Core/Pin schema
  * -------------------------------------------------------------------------------
  * (Mega)AVR + SAMD    9          10          11          A0
+ * 2560               46          45          44          A0
  * ATtiny3217         20|PA3       0|PA4       1|PA5       2|PA6   MegaTinyCore
  * ESP8266            14|D5       12|D6       13|D7        0
  * ESP32               5          18          19          A0
@@ -65,7 +68,11 @@ void blinkLED();
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
-#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/|| defined(SERIALUSB_PID) || defined(ARDUINO_attiny3217)
+    while (!Serial)
+        ; // Wait for Serial to become available. Is optimized away for some cores.
+
+#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/ \
+    || defined(SERIALUSB_PID)  || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_attiny3217)
     delay(4000); // To be able to connect Serial monitor after reset or power up and before first print out. Do not wait for an attached Serial Monitor!
 #endif
     // Just to know which program is running on my Arduino
@@ -146,14 +153,15 @@ void loop() {
     // this speed is changed for the first 2 servos below by synchronizing to the longest duration
     setSpeedForAllServos(tSpeed);
 
-    ServoEasing::ServoEasingArray[0]->setEaseTo(90);    // This servo uses effectively 10 degrees per second, since it is synchronized to Servo3
+    ServoEasing::ServoEasingArray[0]->setEaseTo(90); // This servo uses effectively 10 degrees per second, since it is synchronized to Servo3
     ServoEasing::ServoEasingArray[1]->setEaseTo(135);   // "ServoEasing::ServoEasingArray[1]->" can be used instead of "Servo2."
     Servo3.setEaseTo(180);                              // This servo has the longest distance -> it uses 20 degrees per second
-    synchronizeAllServosAndStartInterrupt(false);       // Do not start interrupt
+    synchronizeAllServosAndStartInterrupt(false);      // Do not start interrupt, because we use updateAllServos() every 20 ms below
 
     do {
-        // here you can call your own program
-        delay(REFRESH_INTERVAL_MILLIS); // optional 20ms delay
+        // Here you can insert your own code
+        /*         */
+        delay(REFRESH_INTERVAL_MILLIS); // Optional 20ms delay. Can be less.
     } while (!updateAllServos());
 
     delay(1000);
@@ -171,13 +179,14 @@ void loop() {
     ServoEasing::ServoEasingNextPositionArray[0] = 180;
     ServoEasing::ServoEasingNextPositionArray[1] = 180;
     ServoEasing::ServoEasingNextPositionArray[2] = 0;
-    setEaseToForAllServosSynchronizeAndStartInterrupt(tSpeed);
+    setEaseToForAllServosSynchronizeAndStartInterrupt(tSpeed); // Set speed and start interrupt here, we check the end with areInterruptsActive()
     /*
      * Now you can run your program while the servos are moving.
      * Just let the LED blink until servos stop.
      * Since all servos stops at the same time I have to check only one
      */
     while (ServoEasing::areInterruptsActive()) {
+        // Here you can insert your own code
         blinkLED();
     }
 
@@ -194,9 +203,11 @@ void loop() {
 #endif
     Servo1.setEaseTo(90, tSpeed);
     Servo2.startEaseToD(90, Servo1.mMillisForCompleteMove);
-    // No timing synchronization required :-)
+    // No timing synchronization with synchronizeAllServosAndStartInterrupt() required, because we use startEaseToD with Servo1.mMillisForCompleteMove :-)
+
     // blink until servo stops
     while (ServoEasing::areInterruptsActive()) {
+        // Here you can insert your own code
         blinkLED();
     }
 
@@ -219,8 +230,10 @@ void loop() {
     Servo1.setEaseTo(0, 80);
     Servo2.setEaseTo(0, 40);
     Servo3.startEaseTo(0, 20); // Start interrupt for all servos. No synchronization here since the servos should move independently.
+
     // Blink until servos stops
     while (ServoEasing::areInterruptsActive()) {
+        // Here you can insert your own code
         blinkLED();
     }
 

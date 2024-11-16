@@ -11,6 +11,14 @@
 #ifndef __digitalWriteFast_h_
 #define __digitalWriteFast_h_ 1
 
+//#define THROW_ERROR_IF_NOT_FAST // If activated, an error is thrown if pin is not a compile time constant
+void NonConstantsUsedForPinModeFast( void )  __attribute__ (( error("Parameter for pinModeFast() function is not constant") ));
+void NonConstantsUsedForDigitalWriteFast( void )  __attribute__ (( error("Parameter for digitalWriteFast() function is not constant") ));
+void NonConstantsUsedForDigitalToggleFast( void )  __attribute__ (( error("Parameter for digitalToggleFast() function is not constant") ));
+int NonConstantsUsedForDigitalReadFast( void )  __attribute__ (( error("Parameter for digitalReadFast() function is not constant") ));
+
+#if !defined(MEGATINYCORE) // megaTinyCore has it own digitalWriteFast function set, except digitalToggleFast().
+
 //#define SANGUINO_PINOUT // define for Sanguino pinout
 
 // general macros/defines
@@ -26,6 +34,8 @@
 #if !defined(BIT_WRITE)
 # define BIT_WRITE(value, bit, bitvalue) (bitvalue ? BIT_SET(value, bit) : BIT_CLEAR(value, bit))
 #endif
+
+#include <Arduino.h> // declarations for the fallback to digitalWrite(), digitalRead() etc.
 
 // --- Arduino Mega and ATmega128x/256x based boards ---
 #if (defined(ARDUINO_AVR_MEGA) || \
@@ -128,6 +138,13 @@
 (((P) <= 7) ? &DDRB : (((P) >= 8 && (P) <= 15) ? &DDRD : (((P) >= 16 && (P) <= 23) ? &DDRC : &DDRA)))
 #define __digitalPinToPINReg(P) \
 (((P) <= 7) ? &PINB : (((P) >= 8 && (P) <= 15) ? &PIND : (((P) >= 16 && (P) <= 23) ? &PINC : &PINA)))
+# if defined(SANGUINO_PINOUT)
+#define __digitalPinToBit(P) \
+(((P) <= 7) ? (P) : (((P) >= 8 && (P) <= 15) ? (P) - 8 : (((P) >= 16 && (P) <= 23) ? (P) - 16 : (7 - ((P) - 24)))))
+# else //MightyCore Pinout
+#define __digitalPinToBit(P) \
+(((P) <= 7) ? (P) : (((P) >= 8 && (P) <= 15) ? (P) - 8 : (((P) >= 16 && (P) <= 23) ? (P) - 16 : (P) - 24)))
+# endif
 #else
 #define __digitalPinToPortReg(P) \
 (((P) <= 7) ? &PORTB : (((P) >= 8 && (P) <= 15) ? &PORTD : &PORTC))
@@ -292,21 +309,16 @@
 #define __digitalPinToPortReg(P) (((P) <= 7) ? &PORTA : &PORTB)
 #define __digitalPinToDDRReg(P)  (((P) <= 7) ? &DDRA : &DDRB)
 #define __digitalPinToPINReg(P)  (((P) <= 7) ? &PINA : &PINB)
-#  if  defined(__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__) || defined(__AVR_ATtiny441__) || defined(__AVR_ATtiny841__)
+# endif
+# if  defined(__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__) || defined(__AVR_ATtiny441__) || defined(__AVR_ATtiny841__)
 // https://github.com/SpenceKonde/ATTinyCore/blob/v2.0.0-devThis-is-the-head-submit-PRs-against-this/avr/variants/tinyx41_cw/pins_arduino.h#L334
 // Clockwise layout
 #define __digitalPinToBit(P)     (((P) <= 7) ? (P) : ((P) == 11 ? (3) : 10 - (P)))
-#  endif
+# else
 #define __digitalPinToBit(P)     (((P) <= 7) ? (P) : (P) - 8 )
 # endif
 
 #endif
-
-
-void NonConstantsUsedForPinModeFast( void )  __attribute__ (( error("Parameter for pinModeFast() function is not constant") ));
-void NonConstantsUsedForDigitalWriteFast( void )  __attribute__ (( error("Parameter for digitalWriteFast() function is not constant") ));
-void NonConstantsUsedForDigitalToggleFast( void )  __attribute__ (( error("Parameter for digitalToggleFast() function is not constant") ));
-int NonConstantsUsedForDigitalReadFast( void )  __attribute__ (( error("Parameter for digitalReadFast() function is not constant") ));
 
 #if !defined(digitalWriteFast)
 #  if (defined(__AVR__) || defined(ARDUINO_ARCH_AVR)) && defined(__digitalPinToPortReg)
@@ -406,4 +418,5 @@ if (__builtin_constant_p(P)) { \
 #  endif
 #endif // !defined(digitalToggleFast)
 
+#endif // !defined(MEGATINYCORE)
 #endif //__digitalWriteFast_h_

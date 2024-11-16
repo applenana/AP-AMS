@@ -33,6 +33,7 @@
  * Platform         Servo1      Servo2      Servo3      Analog     Core/Pin schema
  * -------------------------------------------------------------------------------
  * (Mega)AVR + SAMD    9          10          11          A0
+ * 2560               46          45          44          A0
  * ATtiny3217         20|PA3       0|PA4       1|PA5       2|PA6   MegaTinyCore
  * ESP8266            14|D5       12|D6       13|D7        0
  * ESP32               5          18          19          A0
@@ -45,6 +46,8 @@ ServoEasing Servo1;
 
 void setup() {
     Serial.begin(115200);
+    while (!Serial)
+        ; // Wait for Serial to become available. Is optimized away for some cores.
 
     // Just to know which program is running on my Arduino
     Serial.println(F("START " __FILE__ " from " __DATE__ "\r\nUsing library version " VERSION_SERVO_EASING));
@@ -53,7 +56,7 @@ void setup() {
      * Attach servo to pin and set servo to start position.
      *******************************************************/
     Serial.println(F("Attach servo at pin " STR(SERVO1_PIN)));
-    Servo1.attach(SERVO1_PIN, 45);
+    Servo1.attach(SERVO1_PIN, 45); // Attach pin and go to initial position of 45 degree
 
     delay(500); // Wait for servo to reach start position.
 }

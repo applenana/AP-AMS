@@ -85,6 +85,7 @@
 #define ADC_TEMPERATURE_CHANNEL_MUX 15
 #define ADC_1_1_VOLT_CHANNEL_MUX    12
 #define ADC_GND_CHANNEL_MUX         13
+#define ADC_CHANNEL_MUX_MASK        0x0F
 
 #elif defined(__AVR_ATtiny87__) || defined(__AVR_ATtiny167__)
 #define ADC_ISCR_CHANNEL_MUX         3
@@ -92,56 +93,106 @@
 #define ADC_1_1_VOLT_CHANNEL_MUX    12
 #define ADC_GND_CHANNEL_MUX         14
 #define ADC_VCC_4TH_CHANNEL_MUX     13
+#define ADC_CHANNEL_MUX_MASK        0x1F
 
 #elif defined(__AVR_ATmega328P__)
 #define ADC_TEMPERATURE_CHANNEL_MUX  8
 #define ADC_1_1_VOLT_CHANNEL_MUX    14
 #define ADC_GND_CHANNEL_MUX         15
+#define ADC_CHANNEL_MUX_MASK        0x0F
+
+#elif defined(__AVR_ATmega644P__)
+#define ADC_TEMPERATURE_CHANNEL_MUX  // not existent
+#define ADC_1_1_VOLT_CHANNEL_MUX    0x1E
+#define ADC_GND_CHANNEL_MUX         0x1F
+#define ADC_CHANNEL_MUX_MASK        0x0F
 
 #elif defined(__AVR_ATmega32U4__)
 #define ADC_TEMPERATURE_CHANNEL_MUX 0x27
 #define ADC_1_1_VOLT_CHANNEL_MUX    0x1E
 #define ADC_GND_CHANNEL_MUX         0x1F
+#define ADC_CHANNEL_MUX_MASK        0x3F
 
 #elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__) || defined(__AVR_ATmega1284__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega644__) || defined(__AVR_ATmega644A__) || defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644PA__)
 #define ADC_1_1_VOLT_CHANNEL_MUX    0x1E
 #define ADC_GND_CHANNEL_MUX         0x1F
+#define ADC_CHANNEL_MUX_MASK        0x1F
+
 #define INTERNAL INTERNAL1V1
 
 #else
 #error "No temperature channel definitions specified for this AVR CPU"
 #endif
 
-extern float sVCCVoltage;
-extern uint16_t sVCCVoltageMillivolt;
+/*
+ * Thresholds for OVER and UNDER voltage and detection of kind of power supply (USB or Li-ion)
+ *
+ * Default values are suitable for Li-ion batteries.
+ * We normally have voltage drop at the connectors, so the battery voltage is assumed slightly higher, than the Arduino VCC.
+ * But keep in mind that the ultrasonic distance module HC-SR04 may not work reliable below 3.7 volt.
+ */
+#if !defined(LI_ION_VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define LI_ION_VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT             3400 // Do not stress your battery and we require some power for standby
+#endif
+#if !defined(LI_ION_VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define LI_ION_VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT   3000 // Many Li-ions are specified down to 3.0 volt
+#endif
 
-extern long sLastVoltageCheckMillis;
-extern uint8_t sVoltageTooLowCounter;
+#if !defined(VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT            LI_ION_VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT
+#endif
+#if !defined(VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT  LI_ION_VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT
+#endif
+#if !defined(VCC_OVERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define VCC_OVERVOLTAGE_THRESHOLD_MILLIVOLT             5250 // + 5 % operation voltage
+#endif
+#if !defined(VCC_EMERGENCY_OVERVOLTAGE_THRESHOLD_MILLIVOLT)
+#define VCC_EMERGENCY_OVERVOLTAGE_THRESHOLD_MILLIVOLT   5500 // +10 %. Max recommended operation voltage
+#endif
+#if !defined(VCC_CHECK_PERIOD_MILLIS)
+#define VCC_CHECK_PERIOD_MILLIS                         10000L // 10 seconds period of VCC checks
+#endif
+#if !defined(VCC_UNDERVOLTAGE_CHECKS_BEFORE_STOP)
+#define VCC_UNDERVOLTAGE_CHECKS_BEFORE_STOP     6 // Shutdown after 6 times (60 seconds) VCC below VCC_UNDERVOLTAGE_THRESHOLD_MILLIVOLT or 1 time below VCC_EMERGENCY_UNDERVOLTAGE_THRESHOLD_MILLIVOLT
+#endif
 
-uint16_t readADCChannel(uint8_t aChannelNumber);
-uint16_t readADCChannelWithReference(uint8_t aChannelNumber, uint8_t aReference);
-uint16_t waitAndReadADCChannelWithReference(uint8_t aChannelNumber, uint8_t aReference);
-uint16_t waitAndReadADCChannelWithReferenceAndRestoreADMUXAndReference(uint8_t aChannelNumber, uint8_t aReference);
-uint16_t readADCChannelWithOversample(uint8_t aChannelNumber, uint8_t aOversampleExponent);
-void setADCMultiplexerAndReferenceForNextConversion(uint8_t aChannelNumber, uint8_t aReference);
-uint16_t readADCChannelWithReferenceOversample(uint8_t aChannelNumber, uint8_t aReference, uint8_t aOversampleExponent);
-uint16_t readADCChannelWithReferenceOversampleFast(uint8_t aChannelNumber, uint8_t aReference, uint8_t aOversampleExponent);
-uint16_t readADCChannelWithReferenceMultiSamples(uint8_t aChannelNumber, uint8_t aReference, uint8_t aNumberOfSamples);
-uint16_t readADCChannelWithReferenceMax(uint8_t aChannelNumber, uint8_t aReference, uint16_t aNumberOfSamples);
-uint16_t readADCChannelWithReferenceMaxMicros(uint8_t aChannelNumber, uint8_t aReference, uint16_t aMicrosecondsToAquire);
-uint16_t readUntil4ConsecutiveValuesAreEqual(uint8_t aChannelNumber, uint8_t aDelay, uint8_t aAllowedDifference,
-        uint8_t aMaxRetries);
+#if !defined(VOLTAGE_USB_POWERED_LOWER_THRESHOLD_MILLIVOLT)
+#define VOLTAGE_USB_POWERED_LOWER_THRESHOLD_MILLIVOLT   4300 // Assume USB powered above this voltage
+#endif
 
-uint8_t checkAndWaitForReferenceAndChannelToSwitch(uint8_t aChannelNumber, uint8_t aReference);
+#if !defined(VOLTAGE_USB_POWERED_UPPER_THRESHOLD_MILLIVOLT)
+#define VOLTAGE_USB_POWERED_UPPER_THRESHOLD_MILLIVOLT   4950 // Assume USB powered below this voltage, because of the loss in USB cable. If we have > 4950, we assume to be powered by VIN.
+// In contrast to e.g. powered by VIN, which results in almost perfect 5 volt supply
+#endif
+
+extern long sLastVCCCheckMillis;
+extern uint8_t sVCCTooLowCounter;
+
+uint16_t readADCChannel(uint8_t aADCChannelNumber);
+uint16_t readADCChannelWithReference(uint8_t aADCChannelNumber, uint8_t aReference);
+uint16_t waitAndReadADCChannelWithReference(uint8_t aADCChannelNumber, uint8_t aReference);
+uint16_t waitAndReadADCChannelWithReferenceAndRestoreADMUXAndReference(uint8_t aADCChannelNumber, uint8_t aReference);
+uint16_t readADCChannelWithOversample(uint8_t aADCChannelNumber, uint8_t aOversampleExponent);
+void setADCChannelAndReferenceForNextConversion(uint8_t aADCChannelNumber, uint8_t aReference);
+uint16_t readADCChannelWithReferenceOversampleFast(uint8_t aADCChannelNumber, uint8_t aReference, uint8_t aOversampleExponent);
+uint32_t readADCChannelMultiSamples(uint8_t aPrescale, uint16_t aNumberOfSamples);
+uint16_t readADCChannelMultiSamplesWithReference(uint8_t aADCChannelNumber, uint8_t aReference, uint8_t aNumberOfSamples);
+uint32_t readADCChannelMultiSamplesWithReferenceAndPrescaler(uint8_t aADCChannelNumber, uint8_t aReference, uint8_t aPrescale,
+        uint16_t aNumberOfSamples);
+uint16_t readADCChannelWithReferenceMax(uint8_t aADCChannelNumber, uint8_t aReference, uint16_t aNumberOfSamples);
+uint16_t readADCChannelWithReferenceMaxMicros(uint8_t aADCChannelNumber, uint8_t aReference, uint16_t aMicrosecondsToAquire);
+uint16_t readUntil4ConsecutiveValuesAreEqual(uint8_t aADCChannelNumber, uint8_t aReference, uint8_t aDelay,
+        uint8_t aAllowedDifference, uint8_t aMaxRetries);
+
+uint8_t checkAndWaitForReferenceAndChannelToSwitch(uint8_t aADCChannelNumber, uint8_t aReference);
 
 /*
  * readVCC*() functions store the result in sVCCVoltageMillivolt or sVCCVoltage
  */
 float getVCCVoltageSimple(void);
 void readVCCVoltageSimple(void);
-uint16_t getVCCVoltageMillivoltSimple(void);
 void readVCCVoltageMillivoltSimple(void);
-float getVCCVoltage(void);
 void readVCCVoltage(void);
 uint16_t getVCCVoltageMillivolt(void);
 void readVCCVoltageMillivolt(void);
@@ -152,12 +203,32 @@ void readAndPrintVCCVoltageMillivolt(Print *aSerial);
 uint16_t getVoltageMillivolt(uint16_t aVCCVoltageMillivolt, uint8_t aADCChannelForVoltageMeasurement);
 uint16_t getVoltageMillivolt(uint8_t aADCChannelForVoltageMeasurement);
 uint16_t getVoltageMillivoltWith_1_1VoltReference(uint8_t aADCChannelForVoltageMeasurement);
-float getTemperatureSimple(void);
-float getTemperature(void);
+float getCPUTemperatureSimple(void);
+float getCPUTemperature(void);
+float getTemperature(void) __attribute__ ((deprecated ("Renamed to getCPUTemperature()"))); // deprecated
 
-bool isVCCTooLowMultipleTimes();
-void resetVCCTooLowMultipleTimes();
-bool isVoltageTooLow();
+bool isVCCUSBPowered();
+bool isVCCUSBPowered(Print *aSerial);
+bool isVCCUndervoltageMultipleTimes();
+void resetCounterForVCCUndervoltageMultipleTimes();
+bool isVCCUndervoltage();
+bool isVCCEmergencyUndervoltage();
+bool isVCCOvervoltage();
+bool isVCCOvervoltageSimple();  // Version using readVCCVoltageMillivoltSimple()
+bool isVCCTooHighSimple();      // Version not using readVCCVoltageMillivoltSimple()
 
 #endif //  defined(__AVR__) ...
+
+/*
+ * Variables and functions defined as dummies to allow for seamless compiling on non AVR platforms
+ */
+extern float sVCCVoltage;
+extern uint16_t sVCCVoltageMillivolt;
+
+uint16_t readADCChannelWithReferenceOversample(uint8_t aADCChannelNumber, uint8_t aReference, uint8_t aOversampleExponent);
+
+uint16_t getVCCVoltageMillivoltSimple(void);
+float getVCCVoltage(void);
+float getCPUTemperature(void);
+
 #endif // _ADC_UTILS_H

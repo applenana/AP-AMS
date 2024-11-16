@@ -29,7 +29,7 @@
  *    90 degree 220 ms
  *    45 degree 115 ms
  *
- *  Copyright (C) 2019-2022  Armin Joachimsmeyer
+ *  Copyright (C) 2019-2024  Armin Joachimsmeyer
  *  armin.joachimsmeyer@gmail.com
  *
  *  This file is part of ServoEasing https://github.com/ArminJo/ServoEasing.
@@ -52,22 +52,21 @@
 
 #define VERSION_EXAMPLE "1.0"
 
-#if defined(__AVR__)
+//#if defined(__AVR__)
 #include "ADCUtils.hpp" // for get getVCCVoltageMillivolt
 /*
  * By using LightweightServo library we can change the refresh period.
  * ... and discover that at least SG90 and MG90 servos accept a refresh period down to 2.5 ms!
  */
-//#define USE_LEIGHTWEIGHT_SERVO_LIB  // Only available for ATmega328
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB) && (defined(__AVR_ATmega328P__) || defined(__AVR_ATmega328__))
+//#define USE_LIGHTWEIGHT_SERVO_LIBRARY
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY) && (defined(__AVR_ATmega328P__) || defined(__AVR_ATmega328__) || defined (__AVR_ATmega328PB__) || defined(__AVR_ATmega2560__))
 #include "LightweightServo.hpp"
-#endif
-#endif
-
-#if defined(ESP32)
-#include <ESP32Servo.h>
 #else
+#  if defined(ESP32)
+#include <ESP32Servo.h>
+#  else
 #include <Servo.h>
+#  endif
 #endif
 
 #include "PinDefinitionsAndMore.h"
@@ -77,6 +76,7 @@
  * Platform         Servo1      Servo2      Servo3      Analog     Core/Pin schema
  * -------------------------------------------------------------------------------
  * (Mega)AVR + SAMD    9          10          11          A0
+ * 2560               46          45          44          A0
  * ATtiny3217         20|PA3       0|PA4       1|PA5       2|PA6   MegaTinyCore
  * ESP8266            14|D5       12|D6       13|D7        0
  * ESP32               5          18          19          A0
@@ -85,8 +85,9 @@
  * RP2040             6|GPIO18     7|GPIO19    8|GPIO20
  */
 
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
 #define REFRESH_PERIOD_ANALOG_INPUT_PIN A3
+LightweightServo ServoUnderTest;
 #else
 Servo ServoUnderTest;
 #endif
@@ -109,36 +110,55 @@ void doSwipe(uint8_t aDegreePerStep);
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
-#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/|| defined(SERIALUSB_PID) || defined(ARDUINO_attiny3217)
+    while (!Serial)
+        ; // Wait for Serial to become available. Is optimized away for some cores.
+
+#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/ \
+    || defined(SERIALUSB_PID)  || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_attiny3217)
     delay(4000); // To be able to connect Serial monitor after reset or power up and before first print out. Do not wait for an attached Serial Monitor!
 #endif
     // Just to know which program is running on my Arduino
     Serial.println(F("START " __FILE__ "\r\nVersion " VERSION_EXAMPLE " from " __DATE__));
+    Serial.println(F("Attach servo at pin " STR(SERVO1_PIN) " and wait 3 seconds"));
 
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
-    // Enable servo refresh period potentiometer between A1 and A5
-    // initialize the analog pins as an digital outputs.
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
+    /*
+     * Layout especially for breadboards.
+     * Position the servo refresh period potentiometer between A1 and A5, so that the potentiometer output is at A3 :-)
+     */
+    // initialize the analog pins as an digital outputs to supply the potentiometer.
     pinMode(A1, OUTPUT);
     pinMode(A5, OUTPUT);
     digitalWrite(A1, LOW);
     digitalWrite(A5, HIGH);
 #endif
 
-    Serial.println(F("Value for 0 degree=" STR(ZERO_DEGREE_VALUE_MICROS) "us. Value for 180 degree=" STR(AT_180_DEGREE_VALUE_MICROS) "us."));
+    Serial.println(
+            F(
+                    "Value for 0 degree=" STR(ZERO_DEGREE_VALUE_MICROS) "us. Value for 180 degree=" STR(AT_180_DEGREE_VALUE_MICROS) "us."));
+
+    Serial.println(F("Mode analog input pin=" STR(MODE_ANALOG_INPUT_PIN)));
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
+    Serial.println(F("Servo signal refresh period (2.5 ms to 20 ms) analog input pin=" STR(REFRESH_PERIOD_ANALOG_INPUT_PIN)));
+#endif
+    Serial.println(F("Position or delay analog input pin=" STR(SPEED_OR_POSITION_ANALOG_INPUT_PIN)));
+    Serial.println(F("Mode 0 is direct positioning"));
+    Serial.println(F("Mode 1 to 7 is swipe with delay and 180, 90, 45, 30, 20, 10 degree per step"));
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
+#endif
+    Serial.println();
 
     /*
      * Attach servo to pin 9
      * Set the servo to 90 degree for 3 seconds and show this by lighting the internal LED.
      */
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
-    write9(90);
-#else
     ServoUnderTest.attach(SERVO_UNDER_TEST_PIN, ZERO_DEGREE_VALUE_MICROS, AT_180_DEGREE_VALUE_MICROS);
     ServoUnderTest.write(90);
-#endif
+
     digitalWrite(LED_BUILTIN, HIGH);
     delay(3000);
     digitalWrite(LED_BUILTIN, LOW);
+
 }
 
 void printVCCAndMode(int aVCCMillivolt, uint8_t aMode) {
@@ -155,9 +175,9 @@ void loop() {
     static int sLastPulseMicros;
 
 #if defined(__AVR__)
-    int tVoltageMillivolts = getVCCVoltageMillivolt();
+    int tVCCVoltageMillivolts = getVCCVoltageMillivolt();
 #else
-    int tVoltageMillivolts = 3333; // Dummy value
+    int tVCCVoltageMillivolts = 3333; // Dummy value
 #endif
 
     // required to switch ADC reference
@@ -166,8 +186,9 @@ void loop() {
     int tMode = analogRead(MODE_ANALOG_INPUT_PIN);
 
     int tSpeedOrPosition = analogRead(SPEED_OR_POSITION_ANALOG_INPUT_PIN);
+    int tReactionDelay;
 
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
     /*
      * Set refresh period from 2.5 to 20 ms
      */
@@ -182,19 +203,16 @@ void loop() {
      * Avoid print for mode 0 if nothing changed
      */
     if (tMode != 0) {
-        printVCCAndMode(tVoltageMillivolts, tMode);
+        printVCCAndMode(tVCCVoltageMillivolts, tMode);
     } else if (abs(sLastPulseMicros - tPulseMicros) > 3) {
-        printVCCAndMode(tVoltageMillivolts, tMode);
+        printVCCAndMode(tVCCVoltageMillivolts, tMode);
     }
 
     switch (tMode) {
     case 0:
         // direct position from 0 to 180 degree. We choose bigger range just to be sure both ends are reached.
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
-        writeMicroseconds9(tPulseMicros);
-#else
         ServoUnderTest.writeMicroseconds(tPulseMicros);
-#endif
+
         /*
          * Avoid print if nothing changed
          */
@@ -204,7 +222,7 @@ void loop() {
             Serial.print(F("direct position: micros="));
             Serial.print(tPulseMicros);
             Serial.print(F(" degree="));
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
             Serial.print(MicrosecondsToDegreeLightweightServo(tPulseMicros));
             Serial.print(F(" refresh period="));
             Serial.print(ICR1 / 2000);
@@ -245,19 +263,19 @@ void loop() {
 
     case 7:
         // Test for fast reaction to write
-        tSpeedOrPosition = (((1023 - tSpeedOrPosition) >> 7) * 20) + 20; // gives values 20, 40 to 160
-        Serial.print(F("fast reaction: 85 -> 90 -> 95 -> 90 delay="));
-        Serial.println(tSpeedOrPosition);
+        tReactionDelay = (((1023 - tSpeedOrPosition) >> 7) * 20) + 20; // gives values 20, 40 to 160
+        Serial.print(F("fast reaction: 85 -> 90 -> 95 -> 90 delay between writes="));
+        Serial.println(tReactionDelay);
 
-#if !defined(USE_LEIGHTWEIGHT_SERVO_LIB)
+#if !defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
         ServoUnderTest.write(85);
-        delay(tSpeedOrPosition);
+        delay(tReactionDelay);
         ServoUnderTest.write(90);
-        delay(tSpeedOrPosition);
+        delay(tReactionDelay);
         ServoUnderTest.write(95);
-        delay(tSpeedOrPosition);
+        delay(tReactionDelay);
         ServoUnderTest.write(90);
-        delay(tSpeedOrPosition);
+        delay(tReactionDelay);
 #endif
         break;
 
@@ -284,7 +302,7 @@ void doSwipe(uint8_t aDegreePerStep) {
     Serial.print(F(", delay="));
     Serial.print(tDelayMillis);
     Serial.print(F(" ms"));
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
+#if defined(USE_LIGHTWEIGHT_SERVO_LIBRARY)
     Serial.print(F(", refresh period="));
     Serial.print(ICR1 / 2000);
     Serial.print('.');
@@ -295,21 +313,13 @@ void doSwipe(uint8_t aDegreePerStep) {
 
     uint8_t tDegree = 0;
     while (tDegree < 180) {
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
-        write9(tDegree);
-#else
         ServoUnderTest.write(tDegree); // starts with 0
-#endif
         // read again to enable fast reaction to changed value
         delay(readDelay(aDegreePerStep));
         tDegree += aDegreePerStep;
     }
     while (tDegree > 0) {
-#if defined(USE_LEIGHTWEIGHT_SERVO_LIB)
-        write9(tDegree);
-#else
         ServoUnderTest.write(tDegree);
-#endif
         // read again to enable fast reaction to changed value
         delay(readDelay(aDegreePerStep));
         tDegree -= aDegreePerStep;

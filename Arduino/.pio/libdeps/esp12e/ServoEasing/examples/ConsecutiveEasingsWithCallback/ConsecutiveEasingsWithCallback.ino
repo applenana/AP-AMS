@@ -31,14 +31,17 @@
 //#define USE_PCA9685_SERVO_EXPANDER    // Activating this enables the use of the PCA9685 I2C expander chip/board.
 //#define USE_SOFT_I2C_MASTER           // Saves 1756 bytes program memory and 218 bytes RAM compared with Arduino Wire
 //#define USE_SERVO_LIB                 // If USE_PCA9685_SERVO_EXPANDER is defined, Activating this enables force additional using of regular servo library.
-//#define USE_LEIGHTWEIGHT_SERVO_LIB    // Makes the servo pulse generating immune to other libraries blocking interrupts for a longer time like SoftwareSerial, Adafruit_NeoPixel and DmxSimple.
+//#define USE_LIGHTWEIGHT_SERVO_LIBRARY // Makes the servo pulse generating immune to other libraries blocking interrupts for a longer time like SoftwareSerial, Adafruit_NeoPixel and DmxSimple.
 //#define PROVIDE_ONLY_LINEAR_MOVEMENT  // Activating this disables all but LINEAR movement. Saves up to 1540 bytes program memory.
 //#define DISABLE_COMPLEX_FUNCTIONS     // Activating this disables the SINE, CIRCULAR, BACK, ELASTIC, BOUNCE and PRECISION easings. Saves up to 1850 bytes program memory.
-#define MAX_EASING_SERVOS 1
 //#define DISABLE_MICROS_AS_DEGREE_PARAMETER // Activating this disables microsecond values as (target angle) parameter. Saves 128 bytes program memory.
-//#define DEBUG                         // Activating this enables generate lots of lovely debug output for this library.
+//#define ENABLE_MIN_AND_MAX_CONSTRAINTS     // Activating this enables constraint checking. Requires 4 bytes RAM per servo and 36 bytes program memory.
 
+#define MAX_EASING_SERVOS 1
+
+//#define DEBUG                         // Activating this enables generate lots of lovely debug output for this library.
 //#define PRINT_FOR_SERIAL_PLOTTER      // Activating this enables generate the Arduino plotter output from ServoEasing.hpp.
+
 #include "ServoEasing.hpp"
 #include "PinDefinitionsAndMore.h"
 /*
@@ -47,6 +50,7 @@
  * Platform         Servo1      Servo2      Servo3      Analog     Core/Pin schema
  * -------------------------------------------------------------------------------
  * (Mega)AVR + SAMD    9          10          11          A0
+ * 2560               46          45          44          A0
  * ATtiny3217         20|PA3       0|PA4       1|PA5       2|PA6   MegaTinyCore
  * ESP8266            14|D5       12|D6       13|D7        0
  * ESP32               5          18          19          A0
@@ -63,7 +67,6 @@ ServoEasing Servo1;
 
 #define START_DEGREE_VALUE  0 // The degree value written to the servo at time of attach.
 //#define USE_MICROSECONDS      // Use microseconds instead degrees as parameter
-//#define USE_CONSTRAINTS       // Use constraints to limit the servo movements
 
 /*
  * Arrays for the parameter of movements controlled by callback
@@ -88,7 +91,11 @@ void ServoTargetPositionReachedHandler(ServoEasing *aServoEasingInstance);
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
-#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/|| defined(SERIALUSB_PID) || defined(ARDUINO_attiny3217)
+    while (!Serial)
+        ; // Wait for Serial to become available. Is optimized away for some cores.
+
+#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/ \
+    || defined(SERIALUSB_PID)  || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_attiny3217)
     delay(4000); // To be able to connect Serial monitor after reset or power up and before first print out. Do not wait for an attached Serial Monitor!
 #endif
 #if !defined(PRINT_FOR_SERIAL_PLOTTER)
@@ -133,7 +140,7 @@ void setup() {
     Servo1.setSpeed(90);  // This speed is taken if no further speed argument is given.
 #endif
 
-#if defined(USE_CONSTRAINTS)
+#if defined(ENABLE_MIN_AND_MAX_CONSTRAINTS)
     Servo1.setMinMaxConstraint(5, 175);
 #endif
 
@@ -146,7 +153,7 @@ void setup() {
 
 void loop() {
 
-    if (Servo1.mCurrentMicrosecondsOrUnits != Servo1.mEndMicrosecondsOrUnits) {
+    if (Servo1.mLastTargetMicrosecondsOrUnits != Servo1.mEndMicrosecondsOrUnits) {
         // real moving here
         digitalWrite(LED_BUILTIN, HIGH);
     } else {
@@ -185,7 +192,7 @@ void ServoTargetPositionReachedHandler(ServoEasing *aServoEasingInstance) {
         int tTargetDegree = TargetDegreesArray[sStep];
         uint_fast8_t tEasingType = EasingTypesArray[sStep];
 
-        aServoEasingInstance->setEasingType(tEasingType); // Sevo1
+        aServoEasingInstance->setEasingType(tEasingType); // Servo1
         aServoEasingInstance->startEaseTo(tTargetDegree); // easeTo() uses delay() and will not work here.
         sStep++;
         if (sStep >= NUMBER_OF_MOVEMENTS_IN_A_TRAJECTORY) {

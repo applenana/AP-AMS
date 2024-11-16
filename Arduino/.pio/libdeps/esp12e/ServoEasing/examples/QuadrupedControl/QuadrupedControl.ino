@@ -10,9 +10,9 @@
  * If you use another than the KEYES_CLONE, you have to select the one you use in QuadrupedConfiguration.h
  *
  * IF IR control enabled, the AutoMove demo starts once after 40 seconds.
- * 2 Minutes after the last IR command, Attention movement is performed and repeated every minute.
  *
  * If QUADRUPED_HAS_IR_CONTROL not defined (no IR control attached) the AutoMove demo starts after 20 seconds and repeats every 4 minutes.
+ *
  * 2 Minutes after the last movement, Attention movement is performed and repeated every minute.
  *
  * If US distance sensor and NeoPixel are attached, the distance is shown at the front NeopixelBar.
@@ -64,7 +64,7 @@
 #define ENABLE_QUADRUPED_DEMO_MODE
 
 #if defined(QUADRUPED_HAS_US_DISTANCE_SERVO)
-#define VCC_STOP_THRESHOLD_MILLIVOLT 3500   // stop moving if below 3.6 volt. Below 3.7 volt, the US distance sensor does not work :-(
+#define VCC_STOP_THRESHOLD_MILLIVOLT 3500   // stop moving if below 3.5 volt. Below 3.7 volt, the US distance sensor does not work :-(
 #else
 #define VCC_STOP_THRESHOLD_MILLIVOLT 3200   // stop moving if below 3.2 volt.
 #endif
@@ -131,12 +131,11 @@ uint32_t sMillisOfLastSpecialAction = 0;                            // millis() 
 #define MILLIS_OF_INACTIVITY_BETWEEN_REMINDER_MOVE          60000   // 1 Minute
 #endif
 
-#define VOLTAGE_USB_LOWER_THRESHOLD_MILLIVOLT                4300   // Assume USB powered, if voltage is higher, -> disable auto move after timeout.
-
 void setup() {
     pinModeFast(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
-#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/|| defined(SERIALUSB_PID) || defined(ARDUINO_attiny3217)
+#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/ \
+    || defined(SERIALUSB_PID)  || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_attiny3217)
     delay(4000); // To be able to connect Serial monitor after reset or power up and before first print out. Do not wait for an attached Serial Monitor!
 #endif
     // Just to know which program is running on my Arduino
@@ -163,7 +162,7 @@ void setup() {
     IRDispatcher.init();
     Serial.print(F("Listening to IR remote of type "));
     Serial.print(IR_REMOTE_NAME);
-    Serial.println(F(" at pin " STR(IR_INPUT_PIN)));
+    Serial.println(F(" at pin " STR(IR_RECEIVE_PIN)));
 #endif
 
 #if defined(QUADRUPED_HAS_NEOPIXEL)
@@ -185,10 +184,12 @@ void setup() {
 }
 
 void loop() {
+#if defined(ADC_UTILS_ARE_AVAILABLE)
     /*
      * Check for low voltage
      */
-    checkForLowVoltageAndShutdown();
+    checkForVCCUnderVoltageAndShutdown();
+#endif
 
 #if defined(QUADRUPED_HAS_US_DISTANCE)
     /*
@@ -228,16 +229,16 @@ void loop() {
 #endif
 
     /*
-     * Auto move if timeout (40 s) after boot was reached (and no IR command was received)
+     * Auto move if timeout (40 s) after boot was reached (and no IR command was received and not powered by USB)
      */
     if (!isShutDown) {
         if ((millis() > MILLIS_OF_INACTIVITY_BEFORE_SWITCH_TO_AUTO_MOVE)
 #if defined(QUADRUPED_HAS_IR_CONTROL)
-                && IRDispatcher.IRReceivedData.MillisOfLastCode == 0
+                && IRDispatcher.IRReceivedData.MillisOfLastCode == 0 /* Do auto move only if no IR command received */
 #else
                 && sMillisOfLastSpecialAction == 0
 #endif
-                && (sVCCVoltage < (VOLTAGE_USB_LOWER_THRESHOLD_MILLIVOLT / 1000.0))) {
+                && (!isVCCUSBPowered())) {
             doQuadrupedAutoMove(); // Can be terminated by IR command
 #if defined(QUADRUPED_HAS_IR_CONTROL)
             IRDispatcher.IRReceivedData.MillisOfLastCode = millis(); // disable next auto move, next attention in 2 minutes
@@ -276,6 +277,8 @@ void loop() {
                     - (MILLIS_OF_INACTIVITY_BEFORE_REMINDER_MOVE - MILLIS_OF_INACTIVITY_BETWEEN_REMINDER_MOVE); // next attention in 1 minute
 #endif
         }
+#if defined(ADC_UTILS_ARE_AVAILABLE)
         printVCCVoltageMillivolt(&Serial);
+#endif
     }
 }
