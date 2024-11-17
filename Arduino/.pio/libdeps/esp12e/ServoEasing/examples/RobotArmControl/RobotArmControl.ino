@@ -35,7 +35,7 @@
 
 #if defined(ROBOT_ARM_HAS_IR_CONTROL)
 #define USE_TINY_IR_RECEIVER // must be specified before including IRCommandDispatcher.hpp to define which IR library to use
-#define IR_INPUT_PIN  A0
+#define IR_RECEIVE_PIN  A0
 #if defined(ROBOT_ARM_2)
 #define USE_CAR_MP3_REMOTE // Transparent arm
 #else
@@ -99,12 +99,12 @@ EasyButton ButtonAtPin2(&changeEasingType);
 #define VCC_CHECK_PERIOD_MILLIS        10000 // Period of VCC checks
 #define VCC_CHECKS_TOO_LOW_BEFORE_STOP     6 // Shutdown after 6 times (60 seconds) VCC below VCC_STOP_THRESHOLD_MILLIVOLT or 1 time below VCC_EMERGENCY_STOP_MILLIVOLT
 #include "ADCUtils.hpp"
-void checkAndHandleVCCTooLow();
+void checkAndHandleVCCUndervoltage();
 
 #define VERSION_EXAMPLE "2.0"
 
 void handleManualControl();
-void printConfigPinInfo(uint8_t aConfigPinNumber, const __FlashStringHelper *aConfigPinDescription, Print *aSerial);
+void printConfigPinInfo(Print *aSerial, uint8_t aConfigPinNumber, const __FlashStringHelper *aConfigPinDescription);
 
 #define _TIMEOUT_MILLIS_BEFORE_SWITCH_TO_AUTO_MOVE  30000
 #define MILLIS_OF_INACTIVITY_BEFORE_ATTENTION       60000
@@ -123,7 +123,8 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(DEBUG_OUTPUT_ENABLE_PIN, INPUT_PULLUP);
     Serial.begin(115200);
-#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/|| defined(SERIALUSB_PID) || defined(ARDUINO_attiny3217)
+#if defined(__AVR_ATmega32U4__) || defined(SERIAL_PORT_USBVIRTUAL) || defined(SERIAL_USB) /*stm32duino*/|| defined(USBCON) /*STM32_stm32*/ \
+    || defined(SERIALUSB_PID)  || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_attiny3217)
     delay(4000); // To be able to connect Serial monitor after reset or power up and before first print out. Do not wait for an attached Serial Monitor!
 #endif
     // Just to know which program is running on my Arduino
@@ -142,7 +143,7 @@ void setup() {
     IRDispatcher.init();
     Serial.print(F("Listening to IR remote of type "));
     Serial.print(IR_REMOTE_NAME);
-    Serial.println(F(" at pin " STR(IR_INPUT_PIN)));
+    Serial.println(F(" at pin " STR(IR_RECEIVE_PIN)));
 #endif
 
 #if defined(ROBOT_ARM_HAS_RTC_CONTROL)
@@ -153,7 +154,7 @@ void setup() {
 #endif
 
     sDebugOutputIsEnabled = !digitalRead(DEBUG_OUTPUT_ENABLE_PIN);
-    printConfigPinInfo(DEBUG_OUTPUT_ENABLE_PIN, F("debug output"),&Serial);
+    printConfigPinInfo(&Serial, DEBUG_OUTPUT_ENABLE_PIN, F("debug output"));
 
     // Output VCC voltage
     printVCCVoltageMillivolt(&Serial);
@@ -167,7 +168,7 @@ void loop() {
     sDebugOutputIsEnabled = !digitalRead(DEBUG_OUTPUT_ENABLE_PIN); // enabled if LOW
 
 #if defined(ADC_UTILS_ARE_AVAILABLE)
-    checkAndHandleVCCTooLow();
+    checkAndHandleVCCUndervoltage();
 #endif // defined(__AVR__)
 
 #if defined(ROBOT_ARM_HAS_RTC_CONTROL)
@@ -248,8 +249,8 @@ bool delayAndCheckForRobotArm(uint16_t aDelayMillis) {
 /*
  * If isVCCTooLowMultipleTimes() returns true clear all pattern and activate only 2 MultipleFallingStars pattern on the 2 bars
  */
-void checkAndHandleVCCTooLow() {
-    if (isVCCTooLowMultipleTimes()) {
+void checkAndHandleVCCUndervoltage() {
+    if (isVCCUndervoltageMultipleTimes()) {
         goToFolded(); // Afterwards only auto move is disabled
 #if defined(ROBOT_ARM_HAS_IR_CONTROL)
         sActionType = ACTION_TYPE_STOP;
@@ -401,7 +402,7 @@ void handleManualControl() {
     }
 }
 
-void printConfigPinInfo(uint8_t aConfigPinNumber, const __FlashStringHelper *aConfigPinDescription, Print *aSerial) {
+void printConfigPinInfo(Print *aSerial, uint8_t aConfigPinNumber, const __FlashStringHelper *aConfigPinDescription) {
     aSerial->print(F("Pin "));
     aSerial->print(aConfigPinNumber);
     aSerial->print(F(" is"));

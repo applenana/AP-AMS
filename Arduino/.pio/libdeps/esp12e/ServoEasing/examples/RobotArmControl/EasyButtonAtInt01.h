@@ -1,5 +1,5 @@
 /*
- * EasyButtonAtInt01.hpp
+ * EasyButtonAtInt01.h
  *
  *  Arduino library for handling push buttons connected between ground and INT0 and / or INT1 pin.
  *  INT0 and INT1 are connected to Pin 2 / 3 on most Arduinos (ATmega328), to PB6 / PA3 on ATtiny167 and on ATtinyX5 we have only INT0 at PB2.
@@ -13,7 +13,7 @@
  *  EasyButton Button0AtPin2(true);
  *  The macros INT0_PIN and INT1_PIN are set after the include.
  *
- *  Copyright (C) 2018-2022  Armin Joachimsmeyer
+ *  Copyright (C) 2018-2024  Armin Joachimsmeyer
  *  armin.joachimsmeyer@gmail.com
  *
  *  This file is part of EasyButtonAtInt01 https://github.com/ArminJo/EasyButtonAtInt01.
@@ -26,7 +26,7 @@
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- *  See the See the See the GNU General Public License for more details.
+ *  See the GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
@@ -35,10 +35,10 @@
 #ifndef _EASY_BUTTON_AT_INT01_H
 #define _EASY_BUTTON_AT_INT01_H
 
-#define VERSION_EASY_BUTTON "3.3.2"
+#define VERSION_EASY_BUTTON "3.4.0"
 #define VERSION_EASY_BUTTON_MAJOR 3
-#define VERSION_EASY_BUTTON_MINOR 3
-#define VERSION_EASY_BUTTON_PATCH 2
+#define VERSION_EASY_BUTTON_MINOR 4
+#define VERSION_EASY_BUTTON_PATCH 0
 // The change log is at the bottom of the file
 
 /*
@@ -62,6 +62,10 @@
  * ...
  *
  */
+
+// Return values for button state
+#define BUTTON_IS_ACTIVE    true
+#define BUTTON_IS_INACTIVE  false
 
 /*
  * Enable this if you buttons are active high.
@@ -165,6 +169,16 @@
 #define INT1_IN_PORT  (PINB)
 #define INT1_OUT_PORT (PORTB)
 #  endif // defined(USE_BUTTON_1)
+
+#elif defined(USE_INT2_FOR_BUTTON_0) // Hack for ATmega 644
+#  if defined(USE_BUTTON_1)
+#error If USE_INT2_FOR_BUTTON_0 is defined, only USE_BUTTON_0 is allowed, USE_BUTTON_1 must be disabled!
+#  endif
+// dirty hack, but INT0 and INT1 are occupied by second USART
+#define INT0_PIN 2 // PB2 / INT2
+#define INT0_DDR_PORT (DDRB)
+#define INT0_IN_PORT  (PINB)
+#define INT0_OUT_PORT (PORTB)
 
 #elif defined(__AVR_ATtiny87__) || defined(__AVR_ATtiny167__)
 // from here we use only ATtinyCore / PAx / PBx numbers, since on Digispark board and core library there is used a strange enumeration of pins
@@ -291,6 +305,7 @@ public:
     bool checkForDoublePress(uint16_t aDoublePressDelayMillis = EASY_BUTTON_DOUBLE_PRESS_DEFAULT_MILLIS);
 
     bool readButtonState();
+    bool getButtonStateIsActive(); // get private member
     bool readDebouncedButtonState();
     bool updateButtonState();
     uint16_t updateButtonPressDuration(); // Updates the ButtonPressDurationMillis by polling, since this cannot be done by interrupt.
@@ -304,7 +319,6 @@ public:
     void handleINT01Interrupts(); // internal use only
 
     bool LastBounceWasChangeToInactive; // Internal state, reflects actual reading with spikes and bouncing. Negative logic: true / active means button pin is LOW
-    volatile bool ButtonStateIsActive; // Negative logic: true / active means button pin is LOW. If last press duration < BUTTON_DEBOUNCING_MILLIS it holds wrong value (true instead of false) :-(
     volatile bool ButtonToggleState;    // Toggle is on press, not on release - initial value is false
 
     /*
@@ -351,6 +365,13 @@ public:
 #if defined(USE_BUTTON_1)
     static EasyButton *sPointerToButton1ForISR;
 #endif
+
+private:
+    /*
+     * If last press duration < BUTTON_DEBOUNCING_MILLIS it holds wrong value (true instead of false), therefore it is private.
+     * To get current state, use readButtonState().
+     */
+    volatile bool ButtonStateIsActive; // State at last change. Negative logic: true / active means button pin is LOW.
 };
 // end of class definition
 
@@ -370,9 +391,13 @@ void __attribute__ ((weak)) handleINT1Interrupt();
 
 #endif // defined(__AVR__)
 
-/*
- *  Version 3.3.2 - 9/2022
+/*  Version 3.4.1 - 12/2023
+ *  - Avoid wrong double press detection if calling checkForDoublePress() after release of button.
+ *  - Hack for ATmega 644.
+ *
+ *  Version 3.4.0 - 10/2023
  *  - Added NO_INITIALIZE_IN_CONSTRUCTOR macro to enable late initializing.
+ *  - ButtonStateIsActive is now private, since it is not reliable after bouncing. Use readButtonState() or readDebouncedButtonState() instead.
  *
  *  Version 3.3.1 - 2/2022
  *  - Avoid mistakenly double press detection after boot.
