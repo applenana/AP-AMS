@@ -167,6 +167,11 @@ void loop()
             ledPC(0, 255, 0, 0);
         }
     }
+    // 电机超时判断
+    if (!mc.getStopState())
+    {
+        mc.update();
+    }
 }
 
 void FilamentChange(bool ToStateIsHigh)
@@ -209,7 +214,7 @@ void FilamentChange(bool ToStateIsHigh)
             }
             else if (FilamentState == "busy")
             {
-                mc.forward();
+                mc.forward(300000);
             }
         }
     }

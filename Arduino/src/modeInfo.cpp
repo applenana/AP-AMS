@@ -16,7 +16,7 @@ void modeLEDChange(bool status)
     {
         Serial.println("5s回抽模式,白灯");
 
-        ledPC(2, 255, 255, 255);
+        ledPC(2, 200, 200, 200);
     }
     else
     {
