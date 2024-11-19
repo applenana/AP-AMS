@@ -1,6 +1,6 @@
 #include "processData.h"
 #include "File.h"
-
+#include "modeInfo.h"
 void processData(DataPacket data)
 {
     if (data.sequenceNumber >= data.address)
@@ -51,19 +51,17 @@ void processData(DataPacket data)
                 FilamentState = "exist";
                 break;
             case 0x03: // 抽回结束
-                if (Is5sPull)
+                int nowModeNum = getModeStatus();
+                if (nowModeNum != 4)
                 {
-                    delay(5000); // 回抽5秒
+                    // delay(5000); // 回抽5秒
+                    modeDelay(nowModeNum);
                     sv.pull();
                     mc.stop();
                     mc.setBanMotor(false);
                     FilamentState = "exist";
                     break;
                 }
-                // case 0x04: // 电机可用状态设置
-                // {
-                //     mc.setBanMotor(false);
-                // }
             }
 
             data.length = 0x09;

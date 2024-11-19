@@ -62,7 +62,7 @@ void Motor::update()
     if (!isStop && (millis() - startTime >= timeout))
     {
         banMotor = true;
-        Serial.println("超时停止");
+        // Serial.println("超时停止");
         stop();
     }
 }

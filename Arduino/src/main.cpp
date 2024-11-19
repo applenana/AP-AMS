@@ -14,8 +14,10 @@ Adafruit_NeoPixel leds(3, 12, NEO_GRB + NEO_KHZ800); // 构建leds对象(3个led
 unsigned int FilamentIoPin = A0;                     // 断料检测引脚(ADC=>A0)
 String FilamentState = "none";                       // 断料状态
 bool IsFPinHigh;                                     // ADC是否高电平
-bool Is5sPull = true;                                // 默认返回true，5s回抽
+int modeNum = 1;                                     // 默认模式1，5s回抽
 unsigned long LastBootPressTime;                     // 上一次Boot按键被按下的时间
+bool AllowBootPress = true;                          // 允许按下Boot按键
+bool FirstBootPress = false;                         // 首次按下Boot按键
 
 void FilamentChange(bool ToStateIsHigh);
 
@@ -38,8 +40,8 @@ void setup()
     leds.setBrightness(100);
     leds.clear();
     leds.show();
-    Is5sPull = getModeStatus(); // 默认返回true，5s回抽
-    modeLEDChange(Is5sPull);
+    modeNum = getModeStatus(); // 获取保存的模式编号
+    modeLEDSelect(modeNum);
 }
 
 void loop()
@@ -55,17 +57,30 @@ void loop()
         while (digitalRead(0) == LOW)
         {
             delay(10);
-            // 等待BOOT被松开
+            unsigned long nowTime = millis();
+            if (!FirstBootPress)
+            {
+                LastBootPressTime = nowTime;
+                FirstBootPress = true;
+            }
+            if ((nowTime - LastBootPressTime) > 2000 && AllowBootPress)
+            { // 大于2s就是切换
+                // Serial.println("双击BOOT");
+                modeNum++;
+                if (modeNum > 4)
+                {
+                    modeNum = 0;
+                }
+                setModeStatus(modeNum);
+                modeLEDSelect(modeNum);
+                AllowBootPress = false;
+            }
         }
-        long nowTime = millis();
-        if ((nowTime - LastBootPressTime) < 500)
-        { // 如果0.25秒内按下两次BOOT则判定切换状态
-            // Serial.println("双击BOOT");
-            Is5sPull = not Is5sPull;
-            setModeStatus(Is5sPull);
-            modeLEDChange(Is5sPull);
-        }
-        LastBootPressTime = nowTime;
+    }
+    else
+    {
+        FirstBootPress = false;
+        AllowBootPress = true;
     }
 
     if (datapacket.index == 0 and Serial.read() == 0x3D)
@@ -176,7 +191,7 @@ void loop()
 
 void FilamentChange(bool ToStateIsHigh)
 {
-    if (Is5sPull)
+    if (modeNum != 4)
     {
         if (ToStateIsHigh)
         {
@@ -193,6 +208,7 @@ void FilamentChange(bool ToStateIsHigh)
     {
         if (ToStateIsHigh)
         {
+
             // 低变高-无变有
             if (FilamentState == "none" or FilamentState == "inexist")
             {
@@ -207,6 +223,7 @@ void FilamentChange(bool ToStateIsHigh)
         }
         else if (not ToStateIsHigh)
         {
+
             // 高变低-有变无
             if (FilamentState == "none" or FilamentState == "exist")
             {
