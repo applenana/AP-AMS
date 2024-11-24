@@ -38,8 +38,8 @@ void processData(DataPacket data)
                 mc.forward(300000); // 电机运行5分钟超时，防止过热(什么进料需要五分钟)
                 FilamentState = "busy";
                 break;
-            case 0x0F:       // 抽回
-                delay(1500); // 延迟抽回1.5s
+            case 0x0F:      // 抽回
+                delay(200); // 延迟抽回0.2s
                 sv.push();
                 mc.backforward(300000); // 电机运行5分钟超时，防止过热(什么退料需要五分钟)
                 FilamentState = "busy";

@@ -3,6 +3,7 @@
 #include "processData.h"
 #include "ServoMotor.h"
 #include "Motor.h"
+#include "TaskScheduler.h"
 #include <Adafruit_NeoPixel.h>
 #include <LittleFS.h>
 #include "led.h"
@@ -18,9 +19,8 @@ int modeNum = 1;                                     // 默认模式1，5s回抽
 unsigned long LastBootPressTime;                     // 上一次Boot按键被按下的时间
 bool AllowBootPress = true;                          // 允许按下Boot按键
 bool FirstBootPress = false;                         // 首次按下Boot按键
-
 void FilamentChange(bool ToStateIsHigh);
-
+Scheduler scheduler;
 void setup()
 {
 
@@ -44,7 +44,7 @@ void setup()
     modeLEDSelect(modeNum);
 }
 
-void loop()
+void run()
 {
     if ((analogRead(A0) > 1000) != IsFPinHigh)
     {
@@ -56,7 +56,6 @@ void loop()
     {
         while (digitalRead(0) == LOW)
         {
-            delay(10);
             unsigned long nowTime = millis();
             if (!FirstBootPress)
             {
@@ -187,6 +186,11 @@ void loop()
     {
         mc.update();
     }
+}
+
+void loop()
+{
+    run();
 }
 
 void FilamentChange(bool ToStateIsHigh)
