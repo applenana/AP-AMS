@@ -13,7 +13,9 @@ private:
     bool banMotor = false;
 
 public:
+
     Motor(uint8_t pin1, uint8_t pin2);
+
     void forward(unsigned long);
     void backforward(unsigned long);
     void stop();

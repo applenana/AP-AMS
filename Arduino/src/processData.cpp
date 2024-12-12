@@ -1,7 +1,9 @@
 #include "processData.h"
 #include "File.h"
 #include "modeInfo.h"
+
 bool needBackStop = false; // 需要执行回抽停止
+
 void processData(DataPacket data)
 {
     if (data.sequenceNumber >= data.address)
@@ -11,6 +13,7 @@ void processData(DataPacket data)
         uint8_t originCommandType = data.commandType;
         byte originContent[512];
         memcpy(originContent, data.content, 512); // 复制内容
+
 
         switch (data.commandType)
         {
@@ -71,6 +74,7 @@ void processData(DataPacket data)
                 }
 
                 break;
+
             }
 
             data.length = 0x09;

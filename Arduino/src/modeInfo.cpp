@@ -1,18 +1,23 @@
 #include "File.h"
 #include "led.h"
+
 #include "modeInfo.h"
 uint8_t getBackPullTime()
+
 {
     return ReadModeFromConfig();
 }
 
+
 void setBackPullTime(uint8_t modeNum)
+
 {
     WriteModeConfig(modeNum);
 }
 void singleFlashLED()
 {
     ledPC(2, 200, 200, 200);
+
     delay(50);
     ledPC(2, 0, 0, 0);
     delay(50);
@@ -63,3 +68,4 @@ uint16_t backPullDelay(uint8_t modeNum)
 {
     return modeNum * 1000;
 }
+

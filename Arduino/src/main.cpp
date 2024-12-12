@@ -10,6 +10,7 @@
 #include <LittleFS.h>
 #include "led.h"
 #include "modeInfo.h"
+
 #include "newDelay.h"
 #include "webServer.h"
 // ota相关
@@ -24,6 +25,7 @@ const char *version = "1.4.0.0.7";
 // 1修复amcu发包异常导致的断料状态错误（错误发送送出结束，和回抽结束）
 
 // 业务相关
+
 DataPacket datapacket;
 ServoMotor sv(13);                                   // 构建舵机对象(选择13引脚为pwm输出引脚)
 Motor mc(4, 5);                                      // 构建电机对象(选择4和5引脚控制电机驱动)
@@ -31,6 +33,7 @@ Adafruit_NeoPixel leds(3, 12, NEO_GRB + NEO_KHZ800); // 构建leds对象(3个led
 unsigned int FilamentIoPin = A0;                     // 断料检测引脚(ADC=>A0)
 String FilamentState = "none";                       // 断料状态
 bool IsFPinHigh;                                     // ADC是否高电平
+
 // uint8_t modeNum = 1;                                 // 默认模式1，5s回抽
 uint8_t backStopTime = 5;        // 退料时间 单位秒
 unsigned long LastBootPressTime; // 上一次Boot按键被按下的时间
@@ -72,6 +75,7 @@ void FilamentChange(bool ToStateIsHigh);
 // }
 
 void run()
+
 {
     if ((analogRead(A0) > 1000) != IsFPinHigh)
     {
@@ -187,6 +191,7 @@ void run()
 
 void FilamentChange(bool ToStateIsHigh)
 {
+
     if (backStopTime != 255)
     {
         if (ToStateIsHigh)
@@ -195,10 +200,12 @@ void FilamentChange(bool ToStateIsHigh)
         }
         else if (!ToStateIsHigh)
         {
+
             FilamentState = "inexist";
         }
     }
     else
+
     { // 低变高，无变有
         if (ToStateIsHigh)
         {
@@ -208,12 +215,14 @@ void FilamentChange(bool ToStateIsHigh)
                 FilamentState = "exist";
             }
             // 之前电机运转，无变有
+
             else if (FilamentState == "busy")
             {
                 mc.stop();
                 sv.pull();
                 FilamentState = "exist";
             }
+
         }
         // 高变低，有变无
         else if (!ToStateIsHigh)
@@ -294,6 +303,7 @@ void setup()
             {
                 receivedChar = true;
                 break;
+
             }
         }
     }

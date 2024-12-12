@@ -15,6 +15,7 @@ void ReadContentFromConfig(byte *content, size_t length)
 }
 
 // 写入模式配置文件
+
 void WriteModeConfig(uint8_t modeNum)
 {
     File file = LittleFS.open("/config_mod.bin", "w");
@@ -33,6 +34,7 @@ void WriteModeConfig(uint8_t modeNum)
 }
 // 读取模式配置文件
 uint8_t ReadModeFromConfig()
+
 {
     File file = LittleFS.open("/config_mod.bin", "r");
     if (file)
@@ -43,6 +45,7 @@ uint8_t ReadModeFromConfig()
         // Serial.println("ReadModeFromConfigbytesRead:" + String(bytesRead));
 
         file.close();
+
         return uint8_t(buffer);
     }
     WriteModeConfig(5);
@@ -53,4 +56,3 @@ uint8_t ReadModeFromConfig()
 bool formatFS()
 {
     return LittleFS.format();
-}
