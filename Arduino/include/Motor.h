@@ -4,8 +4,8 @@
 class Motor
 {
 private:
-    int pin1;
-    int pin2;
+    uint8_t pin1;
+    uint8_t pin2;
     bool isStop = true;
     String state = "停止";
     unsigned long startTime = 0;
@@ -13,7 +13,7 @@ private:
     bool banMotor = false;
 
 public:
-    Motor(int pin1, int pin2);
+    Motor(uint8_t pin1, uint8_t pin2);
     void forward(unsigned long);
     void backforward(unsigned long);
     void stop();

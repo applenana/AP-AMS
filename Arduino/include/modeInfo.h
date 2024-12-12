@@ -1,10 +1,11 @@
 
-int getModeStatus();
+uint8_t getBackPullTime();
 
-void setModeStatus(int modeNum);
+void setBackPullTime(uint8_t modeNum);
 
 // void modeLEDChange(bool status);
 
-void modeDelay(int modeNum);
+uint16_t backPullDelay(uint8_t modeNum);
 
-void modeLEDSelect(int modeNum);
+void modeLEDSelect(uint8_t modeNum);
+void singleFlashLED();
