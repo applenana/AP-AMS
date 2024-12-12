@@ -1,6 +1,9 @@
 #include "processData.h"
 #include "File.h"
 #include "modeInfo.h"
+
+bool needBackStop = false; // 需要执行回抽停止
+
 void processData(DataPacket data)
 {
     if (data.sequenceNumber >= data.address)
@@ -11,21 +14,26 @@ void processData(DataPacket data)
         byte originContent[512];
         memcpy(originContent, data.content, 512); // 复制内容
 
+
         switch (data.commandType)
         {
         case 0x00:
             data.length = 0x09;
             data.commandType = 0x80;
             if (FilamentState == "inexist")
+
             {
+                ledPC(2, 255, 128, 0); // 橙色
                 data.content[0] = 0x0F;
             }
             else if (FilamentState == "exist")
             {
+                ledPC(2, 128, 255, 0); // 绿色
                 data.content[0] = 0xF0;
             }
             else if (FilamentState == "busy")
             {
+                ledPC(2, 127, 0, 255); // 紫色
                 data.content[0] = 0xF1;
             }
             data.sendPacket(true);
@@ -38,8 +46,8 @@ void processData(DataPacket data)
                 mc.forward(300000); // 电机运行5分钟超时，防止过热(什么进料需要五分钟)
                 FilamentState = "busy";
                 break;
-            case 0x0F:       // 抽回
-                delay(1500); // 延迟抽回1.5s
+            case 0x0F: // 抽回
+
                 sv.push();
                 mc.backforward(300000); // 电机运行5分钟超时，防止过热(什么退料需要五分钟)
                 FilamentState = "busy";
@@ -48,20 +56,25 @@ void processData(DataPacket data)
                 sv.pull();
                 mc.stop();
                 mc.setBanMotor(false);
-                FilamentState = "exist";
+                if (FilamentState == "busy")
+                {
+                    FilamentState = "exist";
+                }
                 break;
             case 0x03: // 抽回结束
-                int nowModeNum = getModeStatus();
-                if (nowModeNum != 4)
+                mc.setBanMotor(false);
+                uint8_t BackPullTime = getBackPullTime();
+                if (BackPullTime != 255)
                 {
-                    // delay(5000); // 回抽5秒
-                    modeDelay(nowModeNum);
-                    sv.pull();
-                    mc.stop();
-                    mc.setBanMotor(false);
-                    FilamentState = "exist";
-                    break;
+                    needBackStop = true;
                 }
+                else
+                {
+                    needBackStop = false;
+                }
+
+                break;
+
             }
 
             data.length = 0x09;
@@ -93,4 +106,13 @@ void processData(DataPacket data)
         data.sequenceNumber += 1;
         data.sendPacket();
     }
+}
+
+// 回抽停止回调方法
+void backStop()
+{
+    sv.pull();
+    mc.stop();
+    mc.setBanMotor(false);
+    needBackStop = false;
 }

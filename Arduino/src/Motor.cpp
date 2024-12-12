@@ -1,6 +1,8 @@
 #include "Motor.h"
 
-Motor::Motor(int pin1, int pin2)
+
+Motor::Motor(uint8_t pin1, uint8_t pin2)
+
 {
     this->pin1 = pin1;
     this->pin2 = pin2;
